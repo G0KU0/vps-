@@ -9,13 +9,76 @@ NC='\033[0m'
 
 echo -e "${CYAN}"
 echo "╔══════════════════════════════════════════╗"
-echo "║        🐧 Render Ubuntu VPS 🐧          ║"
+echo "║    🐧 Render VPS (Keep-Alive Extreme)   ║"
 echo "╠══════════════════════════════════════════╣"
-echo "║  SSH/SFTP + Web Terminal                 ║"
+echo "║  Multi-layer aktivitás szimuláció        ║"
 echo "╚══════════════════════════════════════════╝"
 echo -e "${NC}"
 
-echo -e "${BLUE}[1/4]${NC} SSH szerver indítása..."
+# ============================================
+# 0) AGRESSZÍV Keep-Alive (multi-layer)
+# ============================================
+echo -e "${BLUE}[0/5]${NC} Agresszív keep-alive indítása..."
+
+# Layer 1: Belső HTTP ping (minden 2 percben)
+(
+  sleep 60
+  while true; do
+    curl -s http://localhost:${PORT:-10000}/ > /dev/null 2>&1 || true
+    sleep 120
+  done
+) &
+
+# Layer 2: Random CPU aktivitás (alacsony terhelés)
+(
+  while true; do
+    echo "$(date +%s%N)" | sha256sum > /dev/null
+    sleep 60
+  done
+) &
+
+# Layer 3: Memória aktivitás (fájl írás/olvasás)
+(
+  while true; do
+    echo "keepalive-$(date +%s)" > /tmp/ka_$RANDOM.txt
+    find /tmp -name "ka_*.txt" -type f 2>/dev/null | head -100 | xargs cat > /dev/null 2>&1
+    find /tmp -name "ka_*.txt" -type f -mmin +10 -delete 2>/dev/null
+    sleep 180
+  done
+) &
+
+# Layer 4: Dummy process aktivitás
+(
+  while true; do
+    sleep 300
+    ps aux > /dev/null
+    df -h > /dev/null
+    free -h > /dev/null
+  done
+) &
+
+# Layer 5: WebSocket ping szimuláció
+(
+  sleep 30
+  while true; do
+    timeout 5 curl -s -N -H "Connection: Upgrade" -H "Upgrade: websocket" \
+      http://localhost:${PORT:-10000}/ws 2>/dev/null || true
+    sleep 180
+  done
+) &
+
+echo -e "${GREEN}  ✓ 5 rétegű keep-alive aktív${NC}"
+echo -e "${YELLOW}  → HTTP ping (2 perc)${NC}"
+echo -e "${YELLOW}  → CPU aktivitás (1 perc)${NC}"
+echo -e "${YELLOW}  → Fájl I/O (3 perc)${NC}"
+echo -e "${YELLOW}  → Process check (5 perc)${NC}"
+echo -e "${YELLOW}  → WebSocket ping (3 perc)${NC}"
+
+# ============================================
+# 1) SSH szerver indítása
+# ============================================
+echo ""
+echo -e "${BLUE}[1/5]${NC} SSH szerver indítása..."
 mkdir -p /run/sshd
 /usr/sbin/sshd
 
@@ -29,8 +92,11 @@ else
     echo -e "${RED}  ✗ SSH szerver hiba${NC}"
 fi
 
+# ============================================
+# 2) bore.pub Tunnel (FileZilla SFTP)
+# ============================================
 echo ""
-echo -e "${BLUE}[2/4]${NC} bore.pub SSH/SFTP tunnel indítása..."
+echo -e "${BLUE}[2/5]${NC} bore.pub SSH/SFTP tunnel indítása..."
 
 if command -v bore >/dev/null 2>&1; then
     bore local 22 --to bore.pub > /tmp/bore.log 2>&1 &
@@ -41,7 +107,7 @@ if command -v bore >/dev/null 2>&1; then
     BORE_PORT=""
     for i in $(seq 1 10); do
         if [ -f /tmp/bore.log ]; then
-            BORE_PORT=$(grep -oP 'listening at bore\.pub:\K[0-9]+' /tmp/bore.log | head -1)
+            BORE_PORT=$(grep -oP 'listening at bore\.pub:\K[0-9]+' /tmp/bore.log 2>/dev/null | head -1)
             if [ -n "$BORE_PORT" ]; then
                 break
             fi
@@ -52,16 +118,9 @@ if command -v bore >/dev/null 2>&1; then
     if [ -n "$BORE_PORT" ]; then
         echo ""
         echo -e "${YELLOW}╔══════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${YELLOW}║  🔐 PUTTY SSH BEÁLLÍTÁSOK                                   ║${NC}"
+        echo -e "${YELLOW}║  📁 FILEZILLA SFTP (fájl fel/letöltés)                       ║${NC}"
         echo -e "${YELLOW}╠══════════════════════════════════════════════════════════════╣${NC}"
-        echo -e "${YELLOW}║${NC}  ${BLUE}Host Name: bore.pub${NC}"
-        echo -e "${YELLOW}║${NC}  ${BLUE}Port: ${BORE_PORT}${NC}"
-        echo -e "${YELLOW}║${NC}  ${BLUE}User: root${NC}"
-        echo -e "${YELLOW}║${NC}  ${BLUE}Pass: ${SSH_PASSWORD}${NC}"
-        echo -e "${YELLOW}╠══════════════════════════════════════════════════════════════╣${NC}"
-        echo -e "${YELLOW}║  📁 FILEZILLA SFTP BEÁLLÍTÁSOK                               ║${NC}"
-        echo -e "${YELLOW}╠══════════════════════════════════════════════════════════════╣${NC}"
-        echo -e "${YELLOW}║${NC}  ${BLUE}Protocol: SFTP${NC}"
+        echo -e "${YELLOW}║${NC}  ${BLUE}Protocol: SFTP - SSH File Transfer Protocol${NC}"
         echo -e "${YELLOW}║${NC}  ${BLUE}Host: bore.pub${NC}"
         echo -e "${YELLOW}║${NC}  ${BLUE}Port: ${BORE_PORT}${NC}"
         echo -e "${YELLOW}║${NC}  ${BLUE}User: root${NC}"
@@ -70,18 +129,15 @@ if command -v bore >/dev/null 2>&1; then
         echo ""
         
         cat > /tmp/ssh-info.txt << EOF
-PUTTY SSH:
-  Host: bore.pub
-  Port: ${BORE_PORT}
-  User: root
-  Pass: ${SSH_PASSWORD}
-
-FILEZILLA SFTP:
-  Protocol: SFTP
-  Host: bore.pub
-  Port: ${BORE_PORT}
-  User: root
-  Pass: ${SSH_PASSWORD}
+╔══════════════════════════════════════════════════════╗
+║  📁 FILEZILLA SFTP                                   ║
+╠══════════════════════════════════════════════════════╣
+║  Protocol: SFTP
+║  Host: bore.pub
+║  Port: ${BORE_PORT}
+║  User: root
+║  Pass: ${SSH_PASSWORD}
+╚══════════════════════════════════════════════════════╝
 EOF
         echo -e "${GREEN}  ✓ bore.pub tunnel aktív port ${BORE_PORT}${NC}"
     else
@@ -89,11 +145,14 @@ EOF
         cat /tmp/bore.log 2>/dev/null
     fi
 else
-    echo -e "${RED}  ✗ bore parancs nincs${NC}"
+    echo -e "${RED}  ✗ bore parancs nincs telepítve${NC}"
 fi
 
+# ============================================
+# 3) tmate SSH tunnel (PuTTY SSH)
+# ============================================
 echo ""
-echo -e "${BLUE}[3/4]${NC} tmate SSH tunnel..."
+echo -e "${BLUE}[3/5]${NC} tmate SSH tunnel (PuTTY-hoz)..."
 
 TMATE_SOCK="/tmp/tmate.sock"
 rm -f "$TMATE_SOCK"
@@ -108,26 +167,72 @@ for i in $(seq 1 20); do
 
         echo ""
         echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║  🔑 TMATE SSH (Alternatív)                                  ║${NC}"
+        echo -e "${CYAN}║  🔐 PUTTY SSH (interaktív terminál)                         ║${NC}"
         echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
+        echo -e "${CYAN}║${NC}  ${GREEN}Terminálból (legegyszerűbb):${NC}"
         echo -e "${CYAN}║${NC}  ${BLUE}${SSH_CMD}${NC}"
         echo -e "${CYAN}║${NC}"
-        echo -e "${CYAN}║${NC}  ${BLUE}Host: ${TMATE_HOST}${NC}"
+        echo -e "${CYAN}║${NC}  ${GREEN}PUTTY beállítások:${NC}"
+        echo -e "${CYAN}║${NC}  ${BLUE}Host Name: ${TMATE_HOST}${NC}"
         echo -e "${CYAN}║${NC}  ${BLUE}Port: 22${NC}"
-        echo -e "${CYAN}║${NC}  ${BLUE}User: ${TMATE_USER}${NC}"
-        echo -e "${CYAN}║${NC}  ${BLUE}Pass: (nincs)${NC}"
+        echo -e "${CYAN}║${NC}  ${BLUE}Connection → Data → Auto-login username:${NC}"
+        echo -e "${CYAN}║${NC}  ${BLUE}  ${TMATE_USER}${NC}"
+        echo -e "${CYAN}║${NC}  ${BLUE}Password: (nincs - automatikus belépés)${NC}"
         echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
         echo ""
 
+        cat >> /tmp/ssh-info.txt << EOF
+
+╔══════════════════════════════════════════════════════╗
+║  🔐 PUTTY SSH                                        ║
+╠══════════════════════════════════════════════════════╣
+║  Host: ${TMATE_HOST}
+║  Port: 22
+║  User: ${TMATE_USER}
+║  Pass: (nincs - automatikus)
+║
+║  Terminálból:
+║    ${SSH_CMD}
+╚══════════════════════════════════════════════════════╝
+EOF
+
         echo "$SSH_CMD" > /tmp/tmate-ssh.txt
-        echo -e "${GREEN}  ✓ tmate SSH aktív!${NC}"
+        echo -e "${GREEN}  ✓ tmate SSH aktív (PuTTY-val is működik!)${NC}"
         break
     fi
     sleep 1
 done
 
+# ============================================
+# 4) Külső ping instrukciók
+# ============================================
 echo ""
-echo -e "${BLUE}[4/4]${NC} Web terminal indítása..."
+echo -e "${BLUE}[4/5]${NC} Külső ping beállítás (FONTOS!)..."
+
+RENDER_URL="https://vps-2h0l.onrender.com"
+
+echo -e "${YELLOW}  ⚠️  KRITIKUS: Állíts be KÜLSŐ pinget!${NC}"
+echo -e ""
+echo -e "${CYAN}  Opció 1 - UptimeRobot (ajánlott):${NC}"
+echo -e "    1. https://uptimerobot.com (ingyen regisztráció)"
+echo -e "    2. Add New Monitor"
+echo -e "    3. URL: ${RENDER_URL}"
+echo -e "    4. Interval: 5 minutes"
+echo -e ""
+echo -e "${CYAN}  Opció 2 - Cron-job.org (gyakoribb ping):${NC}"
+echo -e "    1. https://cron-job.org/en/"
+echo -e "    2. Create Cronjob"
+echo -e "    3. URL: ${RENDER_URL}"
+echo -e "    4. Schedule: */1 * * * * (minden perc)"
+echo -e ""
+echo -e "${GREEN}  ℹ️  A belső keep-alive már fut, de a KÜLSŐ ping${NC}"
+echo -e "${GREEN}     a kulcs a Render ébrentartásához!${NC}"
+
+# ============================================
+# 5) Web Terminal indítása
+# ============================================
+echo ""
+echo -e "${BLUE}[5/5]${NC} Web terminal indítása..."
 
 WEB_USER="${WEB_USER:-admin}"
 WEB_PASS="${WEB_PASS:-render-vps-2024}"
@@ -135,11 +240,27 @@ WEB_PASS="${WEB_PASS:-render-vps-2024}"
 echo -e "${GREEN}  ✓ Web terminal aktív${NC}"
 echo -e "  ${YELLOW}User: ${WEB_USER} | Pass: ${WEB_PASS}${NC}"
 echo ""
-echo -e "${CYAN}══════════════════════════════════════════${NC}"
-echo -e "${CYAN}  🎉 Ubuntu VPS kész! 🎉${NC}"
-echo -e "${CYAN}══════════════════════════════════════════${NC}"
+echo -e "${CYAN}══════════════════════════════════════════════════════════════${NC}"
+echo -e "${CYAN}  🎉 VPS elindult (Extreme Keep-Alive módban)! 🎉${NC}"
+echo -e "${CYAN}══════════════════════════════════════════════════════════════${NC}"
 echo ""
-echo -e "${YELLOW}Parancs: ${BLUE}info${NC} → Csatlakozási adatok"
+echo -e "${YELLOW}📊 Keep-Alive státusz:${NC}"
+echo -e "  ${GREEN}✓${NC} Belső HTTP ping (2 perc)"
+echo -e "  ${GREEN}✓${NC} CPU aktivitás (1 perc)"
+echo -e "  ${GREEN}✓${NC} Fájl I/O (3 perc)"
+echo -e "  ${GREEN}✓${NC} Process check (5 perc)"
+echo -e "  ${GREEN}✓${NC} WebSocket ping (3 perc)"
+echo -e "  ${RED}!${NC} Külső ping: ${YELLOW}TE állítsd be!${NC} (lásd fent)"
+echo ""
+echo -e "${CYAN}📋 Gyors parancsok:${NC}"
+echo -e "  ${BLUE}info${NC}     → Csatlakozási adatok"
+echo -e "  ${BLUE}neofetch${NC} → Rendszer információ"
+echo -e "  ${BLUE}htop${NC}     → Folyamatok"
+echo ""
+echo -e "${RED}⚠️  FONTOS FIGYELMEZTETÉS:${NC}"
+echo -e "  Ez az agresszív keep-alive LEHET hogy működik,"
+echo -e "  de NEM garantált! A KÜLSŐ ping (UptimeRobot)"
+echo -e "  beállítása KÖTELEZŐ a maximális esély érdekében!"
 echo ""
 
 exec ttyd \
@@ -147,6 +268,7 @@ exec ttyd \
     -W \
     -c "${WEB_USER}:${WEB_PASS}" \
     -t fontSize=15 \
-    -t fontFamily="monospace" \
-    -t 'theme={"background":"#1a1b26","foreground":"#c0caf5"}' \
+    -t fontFamily="'JetBrains Mono', 'Fira Code', monospace" \
+    -t 'theme={"background":"#1a1b26","foreground":"#c0caf5","cursor":"#c0caf5"}' \
+    -t drawBoldTextInBrightColors=true \
     /bin/bash --login
