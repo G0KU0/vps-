@@ -6,4 +6,6 @@ services:
     plan: free
     envVars:
       - key: PORT
-        value: "10000"
+        value: "6969"
+      - key: SSH_PASSWORD
+        value: "2003"
