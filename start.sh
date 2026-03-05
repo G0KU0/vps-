@@ -33,7 +33,7 @@ TMATE_SOCK="/tmp/tmate.sock"
 # Korábbi session törlése
 rm -f "$TMATE_SOCK"
 
-# tmate indítás ROOT-ként (nem vps userként!)
+# tmate indítás háttérben ROOT-ként
 tmate -S "$TMATE_SOCK" new-session -d -s main 2>/dev/null
 
 # Várunk hogy a tunnel felépüljön
@@ -69,7 +69,7 @@ else
 fi
 
 # ============================================
-# 3) Web terminal (ttyd) indítása ROOT-ként
+# 3) Web terminal (ttyd) indítása
 # ============================================
 echo ""
 echo -e "${BLUE}[3/3]${NC} Web terminal indítása..."
@@ -87,7 +87,9 @@ echo -e "${GREEN}═════════════════════
 echo ""
 
 # ttyd indítás ROOT-ként (nem sudo-val!)
-# Így nem lesz "no new privileges" probléma
+# -W: írható terminál
+# -c: basic auth (felhasználó:jelszó)
+# -t: téma beállítások
 exec ttyd \
     -p "${PORT:-10000}" \
     -W \
