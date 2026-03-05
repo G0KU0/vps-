@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Europe/Budapest
 
 # ============================================
-# Alap csomagok + fejlesztői eszközök
+# Alap csomagok
 # ============================================
 RUN apt-get update && apt-get install -y \
     neofetch \
@@ -40,15 +40,6 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # ============================================
-# Icecast2 + liquidsoap (Rádió szerver)
-# ============================================
-RUN apt-get update && apt-get install -y \
-    icecast2 \
-    liquidsoap \
-    ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
-
-# ============================================
 # Locale
 # ============================================
 RUN locale-gen en_US.UTF-8 && locale-gen hu_HU.UTF-8
@@ -63,7 +54,7 @@ RUN curl -fsSL https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_
     && chmod +x /usr/local/bin/ttyd
 
 # ============================================
-# Cloudflared (tunnel)
+# Cloudflared (SSH/SFTP tunnel)
 # ============================================
 RUN curl -fsSL \
     https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
@@ -71,7 +62,7 @@ RUN curl -fsSL \
     && chmod +x /usr/local/bin/cloudflared
 
 # ============================================
-# SSH szerver (SFTP támogatással!)
+# SSH szerver (SFTP támogatással)
 # ============================================
 RUN mkdir -p /var/run/sshd \
     && ssh-keygen -A \
@@ -81,20 +72,15 @@ RUN mkdir -p /var/run/sshd \
     && echo "Subsystem sftp /usr/lib/openssh/sftp-server" >> /etc/ssh/sshd_config
 
 # ============================================
-# Munkamappák létrehozása
+# Munkamappák
 # ============================================
-RUN mkdir -p /root/website \
-    && mkdir -p /root/radio/music \
+RUN mkdir -p /root/projects \
     && mkdir -p /root/uploads \
-    && mkdir -p /root/downloads
+    && mkdir -p /root/downloads \
+    && mkdir -p /root/scripts
 
 # ============================================
-# Icecast konfig
-# ============================================
-RUN mkdir -p /etc/icecast2 /var/log/icecast2
-
-# ============================================
-# Bash beállítások
+# Bash beállítások + neofetch
 # ============================================
 RUN echo '' >> /root/.bashrc \
     && echo '# Neofetch' >> /root/.bashrc \
@@ -103,14 +89,11 @@ RUN echo '' >> /root/.bashrc \
     && echo '# Prompt' >> /root/.bashrc \
     && echo 'export PS1="\[\033[1;31m\]┌──(\[\033[1;34m\]root@render-vps\[\033[1;31m\])-[\[\033[0;37m\]\w\[\033[1;31m\]]\n└─\[\033[1;34m\]#\[\033[0m\] "' >> /root/.bashrc \
     && echo '' >> /root/.bashrc \
-    && echo '# Szín támogatás' >> /root/.bashrc \
     && echo 'export TERM=xterm-256color' >> /root/.bashrc
 
 WORKDIR /root
 
 COPY start.sh /start.sh
-COPY icecast.xml /etc/icecast2/icecast.xml
-
 RUN chmod +x /start.sh
 
 CMD ["/start.sh"]
