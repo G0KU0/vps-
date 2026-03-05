@@ -55,10 +55,20 @@ RUN curl -fsSL \
     && chmod +x /usr/local/bin/ttyd
 
 # ============================================
+# Cloudflared telepítés (SSH tunnel PuTTY-hoz)
+# ============================================
+RUN curl -fsSL \
+    https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+    -o /usr/local/bin/cloudflared \
+    && chmod +x /usr/local/bin/cloudflared
+
+# ============================================
 # SSH szerver konfiguráció
 # ============================================
 RUN mkdir -p /var/run/sshd \
-    && ssh-keygen -A
+    && ssh-keygen -A \
+    && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \
+    && sed -i 's/#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
 
 # ============================================
 # Bash beállítások (root userhez)
