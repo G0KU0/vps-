@@ -3,7 +3,19 @@ set -e
 
 echo "════════════════════════════════════════════════"
 echo "   🐧 LINUX SZERVER INDÍTÁSA"
+echo "   📡 Port: 6969"
+echo "   🔑 Jelszó: 2003"
 echo "════════════════════════════════════════════════"
+
+# ── Jelszó beállítása ──
+if [ -z "$SSH_PASSWORD" ]; then
+    export SSH_PASSWORD="2003"
+fi
+
+echo "[INFO] Jelszó beállítása..."
+echo "root:$SSH_PASSWORD" | chpasswd
+echo "admin:$SSH_PASSWORD" | chpasswd
+echo "[OK] Root és admin jelszó beállítva: $SSH_PASSWORD"
 
 # ── Publikus IP lekérése ──
 PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || echo "N/A")
@@ -11,28 +23,31 @@ echo "[INFO] Publikus IP: $PUBLIC_IP"
 
 # ── Info fájl létrehozása ──
 cat > /var/www/html/tunnel.txt << EOF
-═══════════════════════════════════════════════════════
-            🐧 LINUX SZERVER - SSH TUNNEL INFO
-═══════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════
+                🐧 LINUX SZERVER - SSH TUNNEL INFO
+═══════════════════════════════════════════════════════════════════
 
 ⏳ Tunnel indítása folyamatban...
 📡 Frissítsd az oldalt 10 másodperc múlva!
 
 Publikus IP: $PUBLIC_IP
+Web Port: 6969
 Időbélyeg: $(date)
+
+🔑 SSH/SFTP Jelszó: 2003
 
 Használat:
   ssh root@bore.pub -p [PORT]
-  Jelszó: Linux2024!
+  Jelszó: 2003
 
 FileZilla (SFTP):
   Protokoll: SFTP
   Host: bore.pub
   Port: [lásd alább]
-  User: root
-  Pass: Linux2024!
+  User: root vagy admin
+  Pass: 2003
 
-═══════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════
 EOF
 
 # ── Tunnel info frissítő script ──
@@ -48,45 +63,94 @@ while true; do
             PORT=$(echo "$TUNNEL" | cut -d: -f2)
             
             cat > /var/www/html/tunnel.txt << EOF
-═══════════════════════════════════════════════════════
-            🐧 LINUX SZERVER - SSH TUNNEL INFO
-═══════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════
+                🐧 LINUX SZERVER - SSH TUNNEL INFO
+═══════════════════════════════════════════════════════════════════
 
 ✅ TUNNEL AKTÍV!
 
-SSH csatlakozás:
+╔═══════════════════════════════════════════════════════════════╗
+║                    SSH CSATLAKOZÁS                            ║
+╚═══════════════════════════════════════════════════════════════╝
+
   ssh root@${HOST} -p ${PORT}
   
   Vagy admin felhasználóval:
   ssh admin@${HOST} -p ${PORT}
 
-Jelszó (mindkettő): Linux2024!
+  🔑 Jelszó (mindkettő): 2003
 
-FileZilla (SFTP) beállítás:
-  ┌─────────────────────────────────────┐
-  │ Protokoll:  SFTP                    │
-  │ Host:       ${HOST}                 │
-  │ Port:       ${PORT}                 │
-  │ User:       root (vagy admin)       │
-  │ Password:   Linux2024!              │
-  └─────────────────────────────────────┘
+╔═══════════════════════════════════════════════════════════════╗
+║                 FILEZILLA (SFTP) BEÁLLÍTÁS                    ║
+╚═══════════════════════════════════════════════════════════════╝
 
-PuTTY beállítás:
-  Host Name: ${HOST}
+  Protokoll:  SFTP - SSH File Transfer Protocol
+  Host:       ${HOST}
+  Port:       ${PORT}
+  User:       root  (vagy admin)
+  Password:   2003
+
+╔═══════════════════════════════════════════════════════════════╗
+║                     PUTTY BEÁLLÍTÁS                           ║
+╚═══════════════════════════════════════════════════════════════╝
+
+  Host Name (or IP address): ${HOST}
   Port: ${PORT}
   Connection type: SSH
-  Login as: root
-  Password: Linux2024!
+  
+  Bejelentkezés:
+    login as: root
+    password: 2003
 
-Gyors parancsok SSH-ban:
-  neofetch              - Rendszer info
-  htop                  - Folyamatok
-  cd /var/www/html      - Weboldal mappa
-  nano index.html       - Szerkesztés
-  ls -la                - Fájlok listázása
+╔═══════════════════════════════════════════════════════════════╗
+║                    MOBAXTERM BEÁLLÍTÁS                        ║
+╚═══════════════════════════════════════════════════════════════╝
 
-Utolsó frissítés: $(date)
-═══════════════════════════════════════════════════════
+  Session → SSH
+  Remote host: ${HOST}
+  Port: ${PORT}
+  Username: root
+  Password: 2003
+
+╔═══════════════════════════════════════════════════════════════╗
+║                   HASZNOS SSH PARANCSOK                       ║
+╚═══════════════════════════════════════════════════════════════╝
+
+  neofetch                    - Rendszer információ
+  htop                        - Folyamatok megtekintése
+  cd /var/www/html            - Weboldal mappa
+  nano /var/www/html/index.html  - Weboldal szerkesztése
+  ls -la                      - Fájlok listázása
+  df -h                       - Tárhely info
+  free -h                     - Memória info
+  whoami                      - Aktuális felhasználó
+  pwd                         - Aktuális mappa
+  
+╔═══════════════════════════════════════════════════════════════╗
+║                  WEBOLDAL SZERKESZTÉSE                        ║
+╚═══════════════════════════════════════════════════════════════╝
+
+  1. FileZilla-val csatlakozz (fenti beállításokkal)
+  2. Menj a /var/www/html/ mappába
+  3. Húzd be a HTML/CSS/JS fájlokat
+  4. Azonnal elérhető: https://linux-server-XXXX.onrender.com
+
+  Vagy SSH-ban:
+    nano /var/www/html/index.html
+    
+╔═══════════════════════════════════════════════════════════════╗
+║                    RENDSZER INFORMÁCIÓ                        ║
+╚═══════════════════════════════════════════════════════════════╝
+
+  Publikus IP: $(curl -s ifconfig.me 2>/dev/null || echo "N/A")
+  Web Port: 6969
+  SSH Tunnel: ${HOST}:${PORT}
+  Felhasználók: root, admin
+  Jelszó: 2003
+  
+  Utolsó frissítés: $(date)
+
+═══════════════════════════════════════════════════════════════════
 EOF
         fi
     fi
