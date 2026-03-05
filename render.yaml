@@ -1,13 +1,9 @@
 services:
   - type: web
-    name: linux-vps
-    runtime: docker
+    name: linux-server
+    env: docker
     dockerfilePath: ./Dockerfile
     plan: free
-    region: frankfurt
     envVars:
-      - key: WEB_USER
-        value: admin
-      - key: WEB_PASS
-        generateValue: true
-    healthCheckPath: /
+      - key: PORT
+        value: "10000"
