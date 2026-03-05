@@ -49,10 +49,9 @@ RUN curl -fsSL \
 RUN mkdir -p /var/run/sshd /root/.ssh && \
     chmod 700 /root/.ssh
 
-# ── SSH konfiguráció (FIX: tiszta konfig, nem duplikálunk) ──
-RUN cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak && \
-    cat > /etc/ssh/sshd_config << 'SSHCONF'
-# SSH Server Configuration
+# ── SSH konfiguráció (FIX: UsePAM no!) ──
+RUN cat > /etc/ssh/sshd_config << 'SSHCONF'
+# SSH Server Configuration - Render.com optimized
 Port 22
 Protocol 2
 HostKey /etc/ssh/ssh_host_rsa_key
@@ -69,12 +68,14 @@ PubkeyAuthentication yes
 PasswordAuthentication yes
 PermitEmptyPasswords no
 ChallengeResponseAuthentication no
-UsePAM yes
+
+# FIX: PAM kikapcsolása (audit hiba elkerülése)
+UsePAM no
 
 # Network
 X11Forwarding no
 PrintMotd no
-AcceptEnv LANG LC_*
+PrintLastLog yes
 TCPKeepAlive yes
 ClientAliveInterval 120
 ClientAliveCountMax 720
@@ -86,6 +87,12 @@ SSHCONF
 # SSH kulcsok generálása
 RUN ssh-keygen -A
 
+# ── PAM konfiguráció módosítása (audit nélkül) ──
+RUN if [ -f /etc/pam.d/sshd ]; then \
+        sed -i '/pam_loginuid.so/d' /etc/pam.d/sshd; \
+        sed -i '/pam_audit.so/d' /etc/pam.d/sshd; \
+    fi
+
 # ── Felhasználók létrehozása ──
 RUN useradd -m -s /bin/bash admin && \
     usermod -aG sudo admin && \
@@ -95,11 +102,24 @@ RUN useradd -m -s /bin/bash admin && \
     chown admin:admin /home/admin/.ssh
 
 # ── Neofetch bejelentkezéskor ──
-RUN echo 'neofetch' >> /root/.bashrc && \
-    echo 'neofetch' >> /home/admin/.bashrc && \
+RUN echo 'clear' >> /root/.bashrc && \
+    echo 'neofetch' >> /root/.bashrc && \
+    echo 'echo ""' >> /root/.bashrc && \
     echo 'echo "═══════════════════════════════════════════════"' >> /root/.bashrc && \
-    echo 'echo "  SSH Tunnel info: cat /var/www/html/tunnel.txt"' >> /root/.bashrc && \
-    echo 'echo "═══════════════════════════════════════════════"' >> /root/.bashrc
+    echo 'echo "  ✅ Sikeres bejelentkezés!"' >> /root/.bashrc && \
+    echo 'echo "  📂 Weboldal: cd /var/www/html"' >> /root/.bashrc && \
+    echo 'echo "  📡 Tunnel: cat /var/www/html/tunnel.txt"' >> /root/.bashrc && \
+    echo 'echo "═══════════════════════════════════════════════"' >> /root/.bashrc && \
+    echo 'echo ""' >> /root/.bashrc
+
+RUN echo 'clear' >> /home/admin/.bashrc && \
+    echo 'neofetch' >> /home/admin/.bashrc && \
+    echo 'echo ""' >> /home/admin/.bashrc && \
+    echo 'echo "═══════════════════════════════════════════════"' >> /home/admin/.bashrc && \
+    echo 'echo "  ✅ Admin felhasználó - teljes sudo jog"' >> /home/admin/.bashrc && \
+    echo 'echo "  📂 Weboldal: cd /var/www/html"' >> /home/admin/.bashrc && \
+    echo 'echo "═══════════════════════════════════════════════"' >> /home/admin/.bashrc && \
+    echo 'echo ""' >> /home/admin/.bashrc
 
 # ── Munkamappák ──
 RUN mkdir -p /var/www/html /root/projects /home/admin/projects && \
@@ -130,7 +150,7 @@ RUN cat > /var/www/html/index.html << 'HTML'
             color: #58a6ff;
             text-align: center;
             margin-bottom: 30px;
-            font-size: 2em;
+            font-size: 2.5em;
         }
         .box {
             background: #161b22;
@@ -147,13 +167,16 @@ RUN cat > /var/www/html/index.html << 'HTML'
             overflow-x: auto;
             white-space: pre-wrap;
             line-height: 1.5;
+            font-size: 14px;
         }
         .status {
             text-align: center;
             color: #ffa657;
-            font-size: 1.2em;
-            margin-bottom: 10px;
+            font-size: 1.3em;
+            margin-bottom: 15px;
+            font-weight: bold;
         }
+        .active { color: #7ee787; }
     </style>
 </head>
 <body>
@@ -170,15 +193,17 @@ RUN cat > /var/www/html/index.html << 'HTML'
                 .then(r => r.text())
                 .then(t => {
                     document.getElementById('info').textContent = t;
+                    const statusEl = document.getElementById('status');
                     if (t.includes('✅')) {
-                        document.getElementById('status').textContent = '✅ Szerver aktív!';
-                        document.getElementById('status').style.color = '#7ee787';
+                        statusEl.textContent = '✅ SSH Szerver aktív!';
+                        statusEl.className = 'status active';
                     } else {
-                        document.getElementById('status').textContent = '⏳ Tunnel indítása...';
+                        statusEl.textContent = '⏳ Tunnel indítása folyamatban...';
+                        statusEl.className = 'status';
                     }
                 })
                 .catch(() => {
-                    document.getElementById('info').textContent = 'Hiba a betöltéskor!';
+                    document.getElementById('info').textContent = '❌ Hiba a betöltéskor!';
                 });
         }
         load();
