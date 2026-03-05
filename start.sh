@@ -6,26 +6,32 @@ echo "  🐧 SSH Server - Port 6969"
 echo "  🔑 Password: 2003"
 echo "════════════════════════════════════════"
 
-# ── Jelszó beállítása ──
+# ── Jelszavak beállítása ──
 export SSH_PASSWORD="${SSH_PASSWORD:-2003}"
 echo "root:$SSH_PASSWORD" | chpasswd
 echo "admin:$SSH_PASSWORD" | chpasswd
 echo "[OK] Jelszavak beállítva: $SSH_PASSWORD"
 
-# ── SSH daemon tesztelés ──
-echo "[INFO] SSH daemon tesztelése..."
-/usr/sbin/sshd -t
+# ── SSH daemon teszt ──
+echo "[INFO] SSH konfiguráció ellenőrzése..."
+/usr/sbin/sshd -t 2>&1
 if [ $? -eq 0 ]; then
-    echo "[OK] SSH konfig helyes"
+    echo "[OK] SSH config rendben"
 else
-    echo "[HIBA] SSH konfig probléma!"
+    echo "[HIBA] SSH config probléma - próbálom kijavítani..."
+    # Fallback: eredeti config visszaállítása
+    if [ -f /etc/ssh/sshd_config.bak ]; then
+        cp /etc/ssh/sshd_config.bak /etc/ssh/sshd_config
+        sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+        sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    fi
 fi
 
 # ── Publikus IP ──
 PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || echo "N/A")
-echo "[INFO] IP: $PUBLIC_IP"
+echo "[INFO] Publikus IP: $PUBLIC_IP"
 
-# ── Info fájl ──
+# ── Kezdeti info fájl ──
 cat > /var/www/html/tunnel.txt << 'EOF'
 ═══════════════════════════════════════════════════
            🐧 SSH SERVER INDÍTÁSA...
@@ -41,82 +47,103 @@ Felhasználók: root, admin
 ═══════════════════════════════════════════════════
 EOF
 
-# ── Tunnel frissítő ──
+# ── Tunnel frissítő script ──
 cat > /usr/local/bin/update-tunnel.sh << 'UPDATER'
 #!/bin/bash
 
-LOGFILE="/var/log/tunnel.log"
+NGROK_LOG="/var/log/tunnel.log"
+BORE_LOG="/var/log/bore.log"
 
 while true; do
-    # ngrok log ellenőrzése
-    if [ -f "$LOGFILE" ]; then
-        TUNNEL=$(grep -oE 'tcp://[0-9]+\.tcp\.[a-z]+\.ngrok\.io:[0-9]+' "$LOGFILE" 2>/dev/null | tail -1)
+    # Ngrok ellenőrzés
+    if [ -f "$NGROK_LOG" ]; then
+        TUNNEL=$(grep -oE 'tcp://[0-9]+\.tcp\.[a-z]+\.ngrok\.io:[0-9]+' "$NGROK_LOG" 2>/dev/null | tail -1)
         
         if [ -n "$TUNNEL" ]; then
-            # ngrok formátum: tcp://0.tcp.eu.ngrok.io:12345
             HOST=$(echo "$TUNNEL" | sed 's|tcp://||' | cut -d: -f1)
             PORT=$(echo "$TUNNEL" | sed 's|tcp://||' | cut -d: -f2)
             
             cat > /var/www/html/tunnel.txt << EOF
 ═══════════════════════════════════════════════════
-           ✅ SSH SERVER AKTÍV!
+           ✅ SSH SERVER AKTÍV! (NGROK)
 ═══════════════════════════════════════════════════
 
-SSH CSATLAKOZÁS:
+🔐 SSH CSATLAKOZÁS:
+
   ssh root@${HOST} -p ${PORT}
 
-JELSZÓ: 2003
+  🔑 Jelszó: 2003
 
-FILEZILLA (SFTP):
-  Protocol: SFTP
+─────────────────────────────────────────────────
+
+📂 FILEZILLA (SFTP):
+
+  Protocol: SFTP - SSH File Transfer Protocol
   Host: ${HOST}
   Port: ${PORT}
-  User: root
+  User: root (vagy admin)
   Pass: 2003
 
-PUTTY:
-  Host: ${HOST}
+─────────────────────────────────────────────────
+
+💻 PUTTY BEÁLLÍTÁS:
+
+  Host Name: ${HOST}
   Port: ${PORT}
-  Connection: SSH
-  User: root
-  Pass: 2003
+  Connection type: SSH
+  
+  Login:
+    username: root
+    password: 2003
 
-TERMINAL PARANCS:
+─────────────────────────────────────────────────
+
+🖥️ TERMINAL PARANCS (Linux/Mac):
+
   ssh root@${HOST} -p ${PORT}
 
-Ha nem megy, próbáld meg:
+Ha nem megy első próbálkozásra:
+
   ssh -o StrictHostKeyChecking=no root@${HOST} -p ${PORT}
 
-Tunnel: ${TUNNEL}
-Frissítve: $(date '+%H:%M:%S')
+─────────────────────────────────────────────────
+
+📊 RENDSZER INFO:
+  Tunnel: ${TUNNEL}
+  Frissítve: $(date '+%Y-%m-%d %H:%M:%S')
 
 ═══════════════════════════════════════════════════
 EOF
-        else
-            # Bore fallback
-            BORE=$(grep -oE 'bore\.pub:[0-9]+' /var/log/bore.log 2>/dev/null | tail -1)
-            if [ -n "$BORE" ]; then
-                HOST=$(echo "$BORE" | cut -d: -f1)
-                PORT=$(echo "$BORE" | cut -d: -f2)
-                
-                cat > /var/www/html/tunnel.txt << EOF
+            sleep 5
+            continue
+        fi
+    fi
+    
+    # Bore fallback
+    if [ -f "$BORE_LOG" ]; then
+        BORE=$(grep -oE 'bore\.pub:[0-9]+' "$BORE_LOG" 2>/dev/null | tail -1)
+        
+        if [ -n "$BORE" ]; then
+            HOST=$(echo "$BORE" | cut -d: -f1)
+            PORT=$(echo "$BORE" | cut -d: -f2)
+            
+            cat > /var/www/html/tunnel.txt << EOF
 ═══════════════════════════════════════════════════
-           ✅ SSH SERVER AKTÍV (BORE)!
+           ✅ SSH SERVER AKTÍV! (BORE)
 ═══════════════════════════════════════════════════
 
-SSH: ssh root@${HOST} -p ${PORT}
-Jelszó: 2003
+🔐 SSH: ssh root@${HOST} -p ${PORT}
+🔑 Jelszó: 2003
 
-SFTP (FileZilla):
-  Host: ${HOST}
-  Port: ${PORT}
-  User: root
-  Pass: 2003
+📂 SFTP (FileZilla):
+   Host: ${HOST}
+   Port: ${PORT}
+   User: root
+   Pass: 2003
 
 Frissítve: $(date '+%H:%M:%S')
 ═══════════════════════════════════════════════════
 EOF
-            fi
         fi
     fi
     
@@ -126,6 +153,6 @@ UPDATER
 
 chmod +x /usr/local/bin/update-tunnel.sh
 
-# ── Supervisord ──
+# ── Supervisord indítása ──
 echo "[INFO] Szolgáltatások indítása..."
 exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
