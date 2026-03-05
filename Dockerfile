@@ -1,7 +1,8 @@
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV PORT=10000
+ENV PORT=6969
+ENV SSH_PASSWORD="2003"
 
 # ── Alapvető csomagok telepítése ──
 RUN apt-get update && apt-get install -y \
@@ -40,14 +41,10 @@ RUN mkdir -p /var/run/sshd && \
     mkdir -p /root/.ssh && \
     chmod 700 /root/.ssh
 
-# Root jelszó beállítása
-RUN echo 'root:Linux2024!' | chpasswd
-
-# SSH konfiguráció
+# ── SSH konfiguráció ──
 RUN sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && \
     sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
     sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
-    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
     echo "ClientAliveInterval 120" >> /etc/ssh/sshd_config && \
     echo "ClientAliveCountMax 3" >> /etc/ssh/sshd_config
 
@@ -56,7 +53,6 @@ RUN ssh-keygen -A
 
 # ── Admin felhasználó létrehozása ──
 RUN useradd -m -s /bin/bash admin && \
-    echo 'admin:Linux2024!' | chpasswd && \
     usermod -aG sudo admin && \
     echo 'admin ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers && \
     mkdir -p /home/admin/.ssh && \
@@ -77,11 +73,11 @@ RUN mkdir -p /var/www/html && \
     chown -R admin:admin /home/admin/projects
 
 # ── Egyszerű info oldal ──
-RUN echo '<!DOCTYPE html><html><head><title>Linux Server</title></head><body style="background:#0d1117;color:#58a6ff;font-family:sans-serif;padding:50px;text-align:center;"><h1>🐧 Linux Server Running</h1><p>SSH csatlakozás: Nézd a logokat!</p><pre id="log"></pre><script>fetch("/tunnel.txt").then(r=>r.text()).then(t=>document.getElementById("log").textContent=t);</script></body></html>' > /var/www/html/index.html
+RUN echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Linux Server</title><style>*{margin:0;padding:0;box-sizing:border-box;}body{background:#0d1117;color:#c9d1d9;font-family:"Segoe UI",sans-serif;min-height:100vh;padding:20px;}.wrap{max-width:900px;margin:0 auto;}h1{text-align:center;color:#58a6ff;margin-bottom:30px;font-size:2.5em;}pre{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;font-family:"Courier New",monospace;font-size:14px;line-height:1.6;color:#7ee787;white-space:pre-wrap;overflow-x:auto;}.info{background:#1c2128;border-left:4px solid #58a6ff;padding:15px 20px;border-radius:0 8px 8px 0;margin-bottom:20px;}.info strong{color:#58a6ff;}.note{background:#1c1e26;border-left:4px solid #ffa657;padding:12px 16px;border-radius:0 6px 6px 0;margin-top:15px;color:#ffa657;font-size:14px;}</style></head><body><div class="wrap"><h1>🐧 Linux Server Dashboard</h1><div class="info"><strong>📡 Port:</strong> 6969 | <strong>🔑 Jelszó:</strong> 2003</div><pre id="log">Betöltés...</pre><div class="note">⚠️ A tunnel port minden újraindításnál változik. Frissítsd az oldalt az aktuális portért!</div></div><script>function load(){fetch("/tunnel.txt").then(r=>r.text()).then(t=>document.getElementById("log").textContent=t||"Várakozás...").catch(()=>{})}load();setInterval(load,5000);</script></body></html>' > /var/www/html/index.html
 
 # ── Nginx konfiguráció ──
 RUN echo 'server { \n\
-    listen 10000 default_server; \n\
+    listen 6969 default_server; \n\
     root /var/www/html; \n\
     index index.html; \n\
     location / { try_files $uri $uri/ =404; } \n\
@@ -96,6 +92,6 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
 
-EXPOSE 10000
+EXPOSE 6969
 
 CMD ["/start.sh"]
