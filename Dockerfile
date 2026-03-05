@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Europe/Budapest
 
 # ============================================
-# Alap csomagok (TELJES LISTA - bővítve!)
+# Alap csomagok (TELJES LISTA)
 # ============================================
 RUN apt-get update && apt-get install -y \
     # Rendszer monitoring
@@ -67,12 +67,11 @@ RUN curl -fsSL https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_
     && chmod +x /usr/local/bin/ttyd
 
 # ============================================
-# Cloudflared (SSH/SFTP tunnel)
+# bore (TCP tunnel - PuTTY/FileZilla SSH/SFTP)
 # ============================================
-RUN curl -fsSL \
-    https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
-    -o /usr/local/bin/cloudflared \
-    && chmod +x /usr/local/bin/cloudflared
+RUN curl -fsSL https://github.com/ekzhang/bore/releases/download/v0.5.2/bore-v0.5.2-x86_64-unknown-linux-musl.tar.gz \
+    | tar xz -C /usr/local/bin/ \
+    && chmod +x /usr/local/bin/bore
 
 # ============================================
 # SSH szerver (SFTP támogatással)
@@ -85,7 +84,7 @@ RUN mkdir -p /var/run/sshd \
     && echo "Subsystem sftp /usr/lib/openssh/sftp-server" >> /etc/ssh/sshd_config
 
 # ============================================
-# Munkamappák létrehozása
+# Munkamappák
 # ============================================
 RUN mkdir -p /root/projects \
     && mkdir -p /root/uploads \
@@ -93,19 +92,13 @@ RUN mkdir -p /root/projects \
     && mkdir -p /root/scripts
 
 # ============================================
-# Bash beállítások + neofetch automatikus
+# Bash beállítások
 # ============================================
 RUN echo '' >> /root/.bashrc \
-    && echo '# Neofetch megjelenítése belépéskor' >> /root/.bashrc \
     && echo 'neofetch' >> /root/.bashrc \
     && echo '' >> /root/.bashrc \
-    && echo '# Szép prompt' >> /root/.bashrc \
     && echo 'export PS1="\[\033[1;31m\]┌──(\[\033[1;34m\]root@render-vps\[\033[1;31m\])-[\[\033[0;37m\]\w\[\033[1;31m\]]\n└─\[\033[1;34m\]#\[\033[0m\] "' >> /root/.bashrc \
-    && echo '' >> /root/.bashrc \
-    && echo '# Színes terminál' >> /root/.bashrc \
     && echo 'export TERM=xterm-256color' >> /root/.bashrc \
-    && echo '' >> /root/.bashrc \
-    && echo '# Hasznos aliasok' >> /root/.bashrc \
     && echo 'alias ll="ls -lah"' >> /root/.bashrc \
     && echo 'alias info="cat /tmp/ssh-info.txt"' >> /root/.bashrc
 
