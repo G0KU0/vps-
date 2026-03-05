@@ -4,31 +4,42 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Europe/Budapest
 
 # ============================================
-# Alap csomagok
+# Alap csomagok (TELJES LISTA - bővítve!)
 # ============================================
 RUN apt-get update && apt-get install -y \
+    # Rendszer monitoring
     neofetch \
     htop \
+    procps \
+    psmisc \
+    lsof \
+    # Szerkesztők
     vim \
     nano \
+    # Hálózat
     curl \
     wget \
     net-tools \
+    iproute2 \
     iputils-ping \
     dnsutils \
     traceroute \
     nmap \
+    # Fejlesztés
     git \
     python3 \
     python3-pip \
     nodejs \
     npm \
     build-essential \
+    # Terminál
     tmux \
     screen \
     zsh \
+    # SSH/SFTP
     openssh-server \
     tmate \
+    # Egyéb
     sudo \
     unzip \
     zip \
@@ -37,10 +48,12 @@ RUN apt-get update && apt-get install -y \
     jq \
     locales \
     software-properties-common \
+    ca-certificates \
+    gnupg \
     && rm -rf /var/lib/apt/lists/*
 
 # ============================================
-# Locale
+# Locale beállítás
 # ============================================
 RUN locale-gen en_US.UTF-8 && locale-gen hu_HU.UTF-8
 ENV LANG=en_US.UTF-8
@@ -72,7 +85,7 @@ RUN mkdir -p /var/run/sshd \
     && echo "Subsystem sftp /usr/lib/openssh/sftp-server" >> /etc/ssh/sshd_config
 
 # ============================================
-# Munkamappák
+# Munkamappák létrehozása
 # ============================================
 RUN mkdir -p /root/projects \
     && mkdir -p /root/uploads \
@@ -80,16 +93,21 @@ RUN mkdir -p /root/projects \
     && mkdir -p /root/scripts
 
 # ============================================
-# Bash beállítások + neofetch
+# Bash beállítások + neofetch automatikus
 # ============================================
 RUN echo '' >> /root/.bashrc \
-    && echo '# Neofetch' >> /root/.bashrc \
+    && echo '# Neofetch megjelenítése belépéskor' >> /root/.bashrc \
     && echo 'neofetch' >> /root/.bashrc \
     && echo '' >> /root/.bashrc \
-    && echo '# Prompt' >> /root/.bashrc \
+    && echo '# Szép prompt' >> /root/.bashrc \
     && echo 'export PS1="\[\033[1;31m\]┌──(\[\033[1;34m\]root@render-vps\[\033[1;31m\])-[\[\033[0;37m\]\w\[\033[1;31m\]]\n└─\[\033[1;34m\]#\[\033[0m\] "' >> /root/.bashrc \
     && echo '' >> /root/.bashrc \
-    && echo 'export TERM=xterm-256color' >> /root/.bashrc
+    && echo '# Színes terminál' >> /root/.bashrc \
+    && echo 'export TERM=xterm-256color' >> /root/.bashrc \
+    && echo '' >> /root/.bashrc \
+    && echo '# Hasznos aliasok' >> /root/.bashrc \
+    && echo 'alias ll="ls -lah"' >> /root/.bashrc \
+    && echo 'alias info="cat /tmp/ssh-info.txt"' >> /root/.bashrc
 
 WORKDIR /root
 
