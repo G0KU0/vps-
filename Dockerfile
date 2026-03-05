@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# ── ttyd (web terminál, backup) ──
+# ── ttyd (web terminál) ──
 RUN curl -fsSL https://github.com/tsl0922/ttyd/releases/download/1.7.4/ttyd.x86_64 \
     -o /usr/local/bin/ttyd && chmod +x /usr/local/bin/ttyd
 
@@ -39,8 +39,11 @@ RUN curl -fsSL \
     https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz \
     | tar xz -C /usr/local/bin/ && chmod +x /usr/local/bin/bore || true
 
-# ── Dropbear SSH konfiguráció ──
-RUN mkdir -p /etc/dropbear && \
+# ── Dropbear SSH kulcsok (TÖRÖLJÜK ELŐSZÖR, aztán újrageneráljuk) ──
+RUN rm -f /etc/dropbear/dropbear_rsa_host_key \
+          /etc/dropbear/dropbear_ecdsa_host_key \
+          /etc/dropbear/dropbear_ed25519_host_key && \
+    mkdir -p /etc/dropbear && \
     dropbearkey -t rsa -f /etc/dropbear/dropbear_rsa_host_key && \
     dropbearkey -t ecdsa -f /etc/dropbear/dropbear_ecdsa_host_key && \
     dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key
@@ -104,8 +107,6 @@ RUN cat > /var/www/html/index.html << 'HTML'
             color:#fff;text-decoration:none;border-radius:8px;font-size:16px;
             font-weight:600;margin-top:10px;transition:background .2s}
         .btn:hover{background:#2ea043}
-        .btn-blue{background:#1f6feb}
-        .btn-blue:hover{background:#388bfd}
         .status{text-align:center;padding:15px;border-radius:8px;font-size:1.2em;
             font-weight:bold;margin-bottom:15px}
         .active{background:#0d2818;border:1px solid #238636;color:#7ee787}
@@ -134,7 +135,7 @@ RUN cat > /var/www/html/index.html << 'HTML'
         <div class="card full">
             <h2>🖥️ Web Terminál</h2>
             <a href="/terminal/" class="btn">Terminál megnyitása böngészőben</a>
-            <p class="info">Teljes Linux shell. Nem kell semmi telepíteni!</p>
+            <p class="info">Teljes Linux shell - nem kell semmi telepíteni!</p>
         </div>
     </div>
 
@@ -154,7 +155,7 @@ RUN cat > /var/www/html/index.html << 'HTML'
 htop                  # Folyamatok
 cd /var/www/html      # Weboldal mappa
 nano index.html       # Szerkesztés
-ls -la                # Fájlok
+ls -la                # Fájlok listázása
 python3 -m http.server 8080  # Python szerver
 apt update && apt install CSOMAG</pre>
         </div>
@@ -164,18 +165,20 @@ apt update && apt install CSOMAG</pre>
 <script>
 function load(){
     fetch('/sftp.txt').then(r=>r.text()).then(t=>{
-        if(t.includes('✅')){
+        if(t.includes('AKTIV')){
             document.getElementById('status').innerHTML='<span class="active">✅ Szerver aktív!</span>';
             var lines=t.split('\n');
             var host='',port='';
             lines.forEach(l=>{
                 if(l.includes('Host:'))host=l.split('Host:')[1].trim();
-                if(l.includes('Port:'))port=l.split('Port:')[1].trim();
+                if(l.includes('Port:')&&!l.includes('Protocol'))port=l.split('Port:')[1].trim();
             });
-            document.getElementById('ssh-info').textContent=
-                'SSH parancs:\n  ssh root@'+host+' -p '+port+'\n\nJelszó: 2003\n\nPuTTY:\n  Host: '+host+'\n  Port: '+port+'\n  User: root\n  Pass: 2003';
-            document.getElementById('sftp-info').textContent=
-                'Protocol: SFTP\nHost: '+host+'\nPort: '+port+'\nUser: root\nPass: 2003\n\nFájlok helye:\n  /var/www/html/';
+            if(host&&port){
+                document.getElementById('ssh-info').textContent=
+                    'SSH parancs:\n  ssh root@'+host+' -p '+port+'\n\nJelszó: 2003\n\nPuTTY:\n  Host: '+host+'\n  Port: '+port+'\n  User: root\n  Pass: 2003';
+                document.getElementById('sftp-info').textContent=
+                    'Protocol: SFTP\nHost: '+host+'\nPort: '+port+'\nUser: root\nPass: 2003\n\nMappa: /var/www/html/';
+            }
         } else {
             document.getElementById('status').innerHTML='<span class="loading">⏳ Tunnel indítása...</span>';
             document.getElementById('ssh-info').textContent=t;
