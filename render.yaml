@@ -3,12 +3,11 @@ services:
     name: linux-vps
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: free          # vagy "starter" a jobb teljesítményért
-    region: frankfurt    # EU régió (közelebb hozzád)
+    plan: free
+    region: frankfurt
     envVars:
-      # Web terminal belépési adatok
       - key: WEB_USER
         value: admin
       - key: WEB_PASS
-        generateValue: true   # Render generál egy random jelszót
+        generateValue: true
     healthCheckPath: /
