@@ -33,16 +33,16 @@ TMATE_SOCK="/tmp/tmate.sock"
 # Korábbi session törlése
 rm -f "$TMATE_SOCK"
 
-# tmate indítás háttérben a vps userként
-sudo -u vps tmate -S "$TMATE_SOCK" new-session -d -s main 2>/dev/null
+# tmate indítás ROOT-ként (nem vps userként!)
+tmate -S "$TMATE_SOCK" new-session -d -s main 2>/dev/null
 
 # Várunk hogy a tunnel felépüljön
 echo -e "  Várakozás a tunnel felépülésére..."
 for i in $(seq 1 30); do
     sleep 1
-    SSH_CMD=$(sudo -u vps tmate -S "$TMATE_SOCK" display -p '#{tmate_ssh}' 2>/dev/null)
+    SSH_CMD=$(tmate -S "$TMATE_SOCK" display -p '#{tmate_ssh}' 2>/dev/null)
     if [ -n "$SSH_CMD" ] && [ "$SSH_CMD" != "" ]; then
-        SSH_RO=$(sudo -u vps tmate -S "$TMATE_SOCK" display -p '#{tmate_ssh_ro}' 2>/dev/null)
+        SSH_RO=$(tmate -S "$TMATE_SOCK" display -p '#{tmate_ssh_ro}' 2>/dev/null)
         break
     fi
 done
@@ -60,17 +60,16 @@ if [ -n "$SSH_CMD" ]; then
     echo -e "${YELLOW}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     
-    # SSH adatok fájlba mentése (web terminálon is elérhető)
-    echo "$SSH_CMD" > /home/vps/ssh-connection.txt
-    echo "$SSH_RO" >> /home/vps/ssh-connection.txt
-    chown vps:vps /home/vps/ssh-connection.txt
-    echo -e "${GREEN}  ✓ SSH tunnel aktív! Adatok: ~/ssh-connection.txt${NC}"
+    # SSH adatok fájlba mentése
+    echo "$SSH_CMD" > /tmp/ssh-connection.txt
+    echo "$SSH_RO" >> /tmp/ssh-connection.txt
+    echo -e "${GREEN}  ✓ SSH tunnel aktív! Adatok: /tmp/ssh-connection.txt${NC}"
 else
     echo -e "${RED}  ✗ tmate tunnel nem sikerült (de a web terminal működik!)${NC}"
 fi
 
 # ============================================
-# 3) Web terminal (ttyd) indítása
+# 3) Web terminal (ttyd) indítása ROOT-ként
 # ============================================
 echo ""
 echo -e "${BLUE}[3/3]${NC} Web terminal indítása..."
@@ -87,10 +86,8 @@ echo -e "${GREEN}  Minden fut! Használd a VPS-t!  🚀${NC}"
 echo -e "${GREEN}══════════════════════════════════════════${NC}"
 echo ""
 
-# ttyd indítás (ez lesz a fő process)
-# -W: írható terminál
-# -c: basic auth (felhasználó:jelszó)
-# -t: téma beállítások
+# ttyd indítás ROOT-ként (nem sudo-val!)
+# Így nem lesz "no new privileges" probléma
 exec ttyd \
     -p "${PORT:-10000}" \
     -W \
@@ -99,4 +96,4 @@ exec ttyd \
     -t fontFamily="'JetBrains Mono', 'Fira Code', 'Courier New', monospace" \
     -t 'theme={"background":"#1a1b26","foreground":"#c0caf5","cursor":"#c0caf5","selectionBackground":"#33467C"}' \
     -t drawBoldTextInBrightColors=true \
-    sudo -u vps bash --login
+    /bin/bash --login
