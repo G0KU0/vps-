@@ -7,5 +7,3 @@ services:
     envVars:
       - key: PORT
         value: "6969"
-      - key: SSH_PASSWORD
-        value: "2003"
