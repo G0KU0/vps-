@@ -32,7 +32,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# ── ngrok telepítése (stabilabb mint bore) ──
+# ── ngrok telepítése ──
 RUN curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | \
     tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null && \
     echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | \
@@ -40,7 +40,7 @@ RUN curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | \
     apt update && apt install ngrok && \
     rm -rf /var/lib/apt/lists/*
 
-# ── Fallback: bore is telepítve ──
+# ── Bore fallback ──
 RUN curl -fsSL \
     https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz \
     | tar xz -C /usr/local/bin/ && chmod +x /usr/local/bin/bore || true
@@ -49,24 +49,44 @@ RUN curl -fsSL \
 RUN mkdir -p /var/run/sshd /root/.ssh && \
     chmod 700 /root/.ssh
 
-# SSH konfig - engedékenyebb beállítások
-RUN echo "Port 22" >> /etc/ssh/sshd_config && \
-    echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && \
-    echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config && \
-    echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config && \
-    echo "UsePAM yes" >> /etc/ssh/sshd_config && \
-    echo "X11Forwarding no" >> /etc/ssh/sshd_config && \
-    echo "PrintMotd no" >> /etc/ssh/sshd_config && \
-    echo "AcceptEnv LANG LC_*" >> /etc/ssh/sshd_config && \
-    echo "Subsystem sftp /usr/lib/openssh/sftp-server" >> /etc/ssh/sshd_config && \
-    echo "ClientAliveInterval 120" >> /etc/ssh/sshd_config && \
-    echo "ClientAliveCountMax 720" >> /etc/ssh/sshd_config && \
-    echo "TCPKeepAlive yes" >> /etc/ssh/sshd_config
+# ── SSH konfiguráció (FIX: tiszta konfig, nem duplikálunk) ──
+RUN cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak && \
+    cat > /etc/ssh/sshd_config << 'SSHCONF'
+# SSH Server Configuration
+Port 22
+Protocol 2
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ecdsa_key
+HostKey /etc/ssh/ssh_host_ed25519_key
 
-# SSH kulcsok
+# Logging
+SyslogFacility AUTH
+LogLevel INFO
+
+# Authentication
+PermitRootLogin yes
+PubkeyAuthentication yes
+PasswordAuthentication yes
+PermitEmptyPasswords no
+ChallengeResponseAuthentication no
+UsePAM yes
+
+# Network
+X11Forwarding no
+PrintMotd no
+AcceptEnv LANG LC_*
+TCPKeepAlive yes
+ClientAliveInterval 120
+ClientAliveCountMax 720
+
+# SFTP Subsystem
+Subsystem sftp /usr/lib/openssh/sftp-server
+SSHCONF
+
+# SSH kulcsok generálása
 RUN ssh-keygen -A
 
-# ── Felhasználók ──
+# ── Felhasználók létrehozása ──
 RUN useradd -m -s /bin/bash admin && \
     usermod -aG sudo admin && \
     echo 'admin ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers && \
@@ -74,24 +94,121 @@ RUN useradd -m -s /bin/bash admin && \
     chmod 700 /home/admin/.ssh && \
     chown admin:admin /home/admin/.ssh
 
-# ── Neofetch ──
+# ── Neofetch bejelentkezéskor ──
 RUN echo 'neofetch' >> /root/.bashrc && \
     echo 'neofetch' >> /home/admin/.bashrc && \
-    echo 'echo "═══════════════════════════════════"' >> /root/.bashrc && \
-    echo 'echo "SSH: cat /var/www/html/tunnel.txt"' >> /root/.bashrc && \
-    echo 'echo "═══════════════════════════════════"' >> /root/.bashrc
+    echo 'echo "═══════════════════════════════════════════════"' >> /root/.bashrc && \
+    echo 'echo "  SSH Tunnel info: cat /var/www/html/tunnel.txt"' >> /root/.bashrc && \
+    echo 'echo "═══════════════════════════════════════════════"' >> /root/.bashrc
 
-# ── Mappák ──
+# ── Munkamappák ──
 RUN mkdir -p /var/www/html /root/projects /home/admin/projects && \
     chown -R admin:admin /home/admin/projects
 
 # ── Info oldal ──
-RUN echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>SSH Server</title><style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0d1117;color:#c9d1d9;font-family:monospace;padding:20px}.box{max-width:800px;margin:0 auto;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px}h1{color:#58a6ff;margin-bottom:20px}pre{background:#0d1117;padding:15px;border-radius:6px;color:#7ee787;overflow-x:auto;white-space:pre-wrap}</style></head><body><div class="box"><h1>🐧 SSH Server</h1><pre id="info">Betöltés...</pre></div><script>function load(){fetch("/tunnel.txt").then(r=>r.text()).then(t=>document.getElementById("info").textContent=t).catch(()=>{})}load();setInterval(load,3000)</script></body></html>' > /var/www/html/index.html
+RUN cat > /var/www/html/index.html << 'HTML'
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🐧 SSH Server</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0d1117;
+            color: #c9d1d9;
+            font-family: 'Courier New', monospace;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #58a6ff;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2em;
+        }
+        .box {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        pre {
+            background: #0d1117;
+            padding: 15px;
+            border-radius: 6px;
+            color: #7ee787;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            line-height: 1.5;
+        }
+        .status {
+            text-align: center;
+            color: #ffa657;
+            font-size: 1.2em;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🐧 Linux SSH Server</h1>
+        <div class="status" id="status">🔄 Betöltés...</div>
+        <div class="box">
+            <pre id="info">Tunnel információ betöltése...</pre>
+        </div>
+    </div>
+    <script>
+        function load() {
+            fetch('/tunnel.txt')
+                .then(r => r.text())
+                .then(t => {
+                    document.getElementById('info').textContent = t;
+                    if (t.includes('✅')) {
+                        document.getElementById('status').textContent = '✅ Szerver aktív!';
+                        document.getElementById('status').style.color = '#7ee787';
+                    } else {
+                        document.getElementById('status').textContent = '⏳ Tunnel indítása...';
+                    }
+                })
+                .catch(() => {
+                    document.getElementById('info').textContent = 'Hiba a betöltéskor!';
+                });
+        }
+        load();
+        setInterval(load, 3000);
+    </script>
+</body>
+</html>
+HTML
 
-# ── Nginx ──
-RUN echo 'server{listen 6969;root /var/www/html;index index.html;location /{try_files $uri $uri/ =404;}location /tunnel.txt{default_type text/plain;add_header Cache-Control "no-cache";}}' > /etc/nginx/sites-available/default
+# ── Nginx konfiguráció ──
+RUN cat > /etc/nginx/sites-available/default << 'NGINX'
+server {
+    listen 6969 default_server;
+    root /var/www/html;
+    index index.html;
+    
+    location / {
+        try_files $uri $uri/ =404;
+    }
+    
+    location /tunnel.txt {
+        default_type text/plain;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        add_header Pragma "no-cache";
+        add_header Expires "0";
+    }
+}
+NGINX
 
-# ── Másolás ──
+# ── Fájlok másolása ──
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
