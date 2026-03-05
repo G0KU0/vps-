@@ -4,6 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Europe/Budapest
 
 RUN apt-get update && apt-get install -y \
+    nginx \
     neofetch htop procps psmisc lsof vim nano \
     curl wget net-tools iproute2 iputils-ping \
     dnsutils traceroute nmap git python3 python3-pip \
