@@ -39,7 +39,7 @@ RUN curl -fsSL \
     https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz \
     | tar xz -C /usr/local/bin/ && chmod +x /usr/local/bin/bore || true
 
-# ── Dropbear SSH kulcsok (TÖRÖLJÜK ELŐSZÖR, aztán újrageneráljuk) ──
+# ── Dropbear SSH kulcsok ──
 RUN rm -f /etc/dropbear/dropbear_rsa_host_key \
           /etc/dropbear/dropbear_ecdsa_host_key \
           /etc/dropbear/dropbear_ed25519_host_key && \
@@ -134,7 +134,7 @@ RUN cat > /var/www/html/index.html << 'HTML'
     <div class="row">
         <div class="card full">
             <h2>🖥️ Web Terminál</h2>
-            <a href="/terminal/" class="btn">Terminál megnyitása böngészőben</a>
+            <a href="/terminal" class="btn" target="_blank">Terminál megnyitása új ablakban</a>
             <p class="info">Teljes Linux shell - nem kell semmi telepíteni!</p>
         </div>
     </div>
@@ -143,7 +143,7 @@ RUN cat > /var/www/html/index.html << 'HTML'
         <div class="card full">
             <h2>🖥️ Beágyazott Terminál</h2>
             <div style="background:#000;border-radius:8px;overflow:hidden;height:500px">
-                <iframe src="/terminal/" style="width:100%;height:100%;border:none"></iframe>
+                <iframe src="/terminal" style="width:100%;height:100%;border:none"></iframe>
             </div>
         </div>
     </div>
@@ -204,14 +204,19 @@ server {
         try_files $uri $uri/ =404;
     }
 
-    location /terminal/ {
-        proxy_pass http://127.0.0.1:7681/;
+    location /terminal {
+        proxy_pass http://127.0.0.1:7681;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 86400;
         proxy_send_timeout 86400;
+        proxy_buffering off;
+        proxy_cache off;
     }
 
     location /sftp.txt {
