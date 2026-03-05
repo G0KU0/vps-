@@ -93,24 +93,44 @@ else
 fi
 
 # ============================================
-# 2) bore.pub Tunnel (FileZilla SFTP)
+# 1.5) ÚJ: Nginx Webszerver indítása (Weboldal hosztoláshoz)
 # ============================================
 echo ""
-echo -e "${BLUE}[2/5]${NC} bore.pub SSH/SFTP tunnel indítása..."
+echo -e "${BLUE}[1.5/5]${NC} Nginx webszerver indítása..."
+service nginx start
+mkdir -p /var/www/html
+# Létrehozunk egy alapoldalt a neofetch kimenetével
+echo "<html><body style='background:#1a1b26;color:#c0caf5;font-family:monospace;padding:20px;'><pre style='color:#7aa2f7;'>" > /var/www/html/index.html
+neofetch --stdout >> /var/www/html/index.html
+echo "</pre><hr><h1 style='color:#bb9af7'>Saját weboldal a VPS-en!</h1>" >> /var/www/html/index.html
+echo "<p>Ezt a fájlt itt találod: <b>/var/www/html/index.html</b></p></body></html>" >> /var/www/html/index.html
+
+# ============================================
+# 2) bore.pub Tunnel (FileZilla SFTP és Weboldal)
+# ============================================
+echo ""
+echo -e "${BLUE}[2/5]${NC} bore.pub tunnel-ek indítása..."
 
 if command -v bore >/dev/null 2>&1; then
+    # SFTP Tunnel (22-es port)
     bore local 22 --to bore.pub > /tmp/bore.log 2>&1 &
+    # ÚJ: Web Tunnel (80-as port)
+    bore local 80 --to bore.pub > /tmp/bore_web.log 2>&1 &
     
     echo -e "  Várakozás a tunnel felépülésére..."
     sleep 8
 
     BORE_PORT=""
+    BORE_WEB_PORT=""
     for i in $(seq 1 10); do
         if [ -f /tmp/bore.log ]; then
             BORE_PORT=$(grep -oP 'listening at bore\.pub:\K[0-9]+' /tmp/bore.log 2>/dev/null | head -1)
-            if [ -n "$BORE_PORT" ]; then
-                break
-            fi
+        fi
+        if [ -f /tmp/bore_web.log ]; then
+            BORE_WEB_PORT=$(grep -oP 'listening at bore\.pub:\K[0-9]+' /tmp/bore_web.log 2>/dev/null | head -1)
+        fi
+        if [ -n "$BORE_PORT" ] && [ -n "$BORE_WEB_PORT" ]; then
+            break
         fi
         sleep 2
     done
@@ -118,8 +138,9 @@ if command -v bore >/dev/null 2>&1; then
     if [ -n "$BORE_PORT" ]; then
         echo ""
         echo -e "${YELLOW}╔══════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${YELLOW}║  📁 FILEZILLA SFTP (fájl fel/letöltés)                       ║${NC}"
+        echo -e "${YELLOW}║  📁 FILEZILLA SFTP ÉS WEBOLDAL INFÓ                          ║${NC}"
         echo -e "${YELLOW}╠══════════════════════════════════════════════════════════════╣${NC}"
+        echo -e "${YELLOW}║${NC}  ${BLUE}Weboldal címe: http://bore.pub:${BORE_WEB_PORT}${NC}"
         echo -e "${YELLOW}║${NC}  ${BLUE}Protocol: SFTP - SSH File Transfer Protocol${NC}"
         echo -e "${YELLOW}║${NC}  ${BLUE}Host: bore.pub${NC}"
         echo -e "${YELLOW}║${NC}  ${BLUE}Port: ${BORE_PORT}${NC}"
@@ -130,19 +151,18 @@ if command -v bore >/dev/null 2>&1; then
         
         cat > /tmp/ssh-info.txt << EOF
 ╔══════════════════════════════════════════════════════╗
-║  📁 FILEZILLA SFTP                                   ║
+║  📁 HÁLÓZATI ADATOK                                  ║
 ╠══════════════════════════════════════════════════════╣
-║  Protocol: SFTP
-║  Host: bore.pub
-║  Port: ${BORE_PORT}
+║  Weboldal: http://bore.pub:${BORE_WEB_PORT}
+║  SFTP Host: bore.pub
+║  SFTP Port: ${BORE_PORT}
 ║  User: root
 ║  Pass: ${SSH_PASSWORD}
 ╚══════════════════════════════════════════════════════╝
 EOF
-        echo -e "${GREEN}  ✓ bore.pub tunnel aktív port ${BORE_PORT}${NC}"
+        echo -e "${GREEN}  ✓ bore.pub tunnel aktív${NC}"
     else
         echo -e "${RED}  ✗ bore.pub tunnel hiba${NC}"
-        cat /tmp/bore.log 2>/dev/null
     fi
 else
     echo -e "${RED}  ✗ bore parancs nincs telepítve${NC}"
@@ -197,7 +217,7 @@ for i in $(seq 1 20); do
 EOF
 
         echo "$SSH_CMD" > /tmp/tmate-ssh.txt
-        echo -e "${GREEN}  ✓ tmate SSH aktív (PuTTY-val is működik!)${NC}"
+        echo -e "${GREEN}  ✓ tmate SSH aktív${NC}"
         break
     fi
     sleep 1
@@ -213,20 +233,8 @@ RENDER_URL="https://vps-2h0l.onrender.com"
 
 echo -e "${YELLOW}  ⚠️  KRITIKUS: Állíts be KÜLSŐ pinget!${NC}"
 echo -e ""
-echo -e "${CYAN}  Opció 1 - UptimeRobot (ajánlott):${NC}"
-echo -e "    1. https://uptimerobot.com (ingyen regisztráció)"
-echo -e "    2. Add New Monitor"
-echo -e "    3. URL: ${RENDER_URL}"
-echo -e "    4. Interval: 5 minutes"
+echo -e "${CYAN}  URL: ${RENDER_URL}${NC}"
 echo -e ""
-echo -e "${CYAN}  Opció 2 - Cron-job.org (gyakoribb ping):${NC}"
-echo -e "    1. https://cron-job.org/en/"
-echo -e "    2. Create Cronjob"
-echo -e "    3. URL: ${RENDER_URL}"
-echo -e "    4. Schedule: */1 * * * * (minden perc)"
-echo -e ""
-echo -e "${GREEN}  ℹ️  A belső keep-alive már fut, de a KÜLSŐ ping${NC}"
-echo -e "${GREEN}     a kulcs a Render ébrentartásához!${NC}"
 
 # ============================================
 # 5) Web Terminal indítása
@@ -241,26 +249,8 @@ echo -e "${GREEN}  ✓ Web terminal aktív${NC}"
 echo -e "  ${YELLOW}User: ${WEB_USER} | Pass: ${WEB_PASS}${NC}"
 echo ""
 echo -e "${CYAN}══════════════════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}  🎉 VPS elindult (Extreme Keep-Alive módban)! 🎉${NC}"
+echo -e "${CYAN}  🎉 VPS elindult + Weboldal aktív! 🎉${NC}"
 echo -e "${CYAN}══════════════════════════════════════════════════════════════${NC}"
-echo ""
-echo -e "${YELLOW}📊 Keep-Alive státusz:${NC}"
-echo -e "  ${GREEN}✓${NC} Belső HTTP ping (2 perc)"
-echo -e "  ${GREEN}✓${NC} CPU aktivitás (1 perc)"
-echo -e "  ${GREEN}✓${NC} Fájl I/O (3 perc)"
-echo -e "  ${GREEN}✓${NC} Process check (5 perc)"
-echo -e "  ${GREEN}✓${NC} WebSocket ping (3 perc)"
-echo -e "  ${RED}!${NC} Külső ping: ${YELLOW}TE állítsd be!${NC} (lásd fent)"
-echo ""
-echo -e "${CYAN}📋 Gyors parancsok:${NC}"
-echo -e "  ${BLUE}info${NC}     → Csatlakozási adatok"
-echo -e "  ${BLUE}neofetch${NC} → Rendszer információ"
-echo -e "  ${BLUE}htop${NC}     → Folyamatok"
-echo ""
-echo -e "${RED}⚠️  FONTOS FIGYELMEZTETÉS:${NC}"
-echo -e "  Ez az agresszív keep-alive LEHET hogy működik,"
-echo -e "  de NEM garantált! A KÜLSŐ ping (UptimeRobot)"
-echo -e "  beállítása KÖTELEZŐ a maximális esély érdekében!"
 echo ""
 
 exec ttyd \
