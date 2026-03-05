@@ -7,13 +7,10 @@ ENV TZ=Europe/Budapest
 # Alap Linux eszközök + neofetch
 # ============================================
 RUN apt-get update && apt-get install -y \
-    # --- Rendszer info ---
     neofetch \
     htop \
-    # --- Szerkesztők ---
     vim \
     nano \
-    # --- Hálózat ---
     curl \
     wget \
     net-tools \
@@ -21,21 +18,17 @@ RUN apt-get update && apt-get install -y \
     dnsutils \
     traceroute \
     nmap \
-    # --- Fejlesztés ---
     git \
     python3 \
     python3-pip \
     nodejs \
     npm \
     build-essential \
-    # --- Terminál ---
     tmux \
     screen \
     zsh \
-    # --- SSH ---
     openssh-server \
     tmate \
-    # --- Egyéb ---
     sudo \
     unzip \
     zip \
@@ -62,39 +55,25 @@ RUN curl -fsSL \
     && chmod +x /usr/local/bin/ttyd
 
 # ============================================
-# VPS felhasználó létrehozása
-# ============================================
-RUN useradd -m -s /bin/bash vps \
-    && echo "vps:changeme123" | chpasswd \
-    && usermod -aG sudo vps \
-    && echo "vps ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
-
-# ============================================
 # SSH szerver konfiguráció
 # ============================================
 RUN mkdir -p /var/run/sshd \
-    && ssh-keygen -A \
-    && sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config \
-    && sed -i 's/#PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+    && ssh-keygen -A
 
 # ============================================
-# Felhasználói beállítások
+# Bash beállítások (root userhez)
 # ============================================
-# Neofetch automatikus futtatás belépéskor
-RUN echo '' >> /home/vps/.bashrc \
-    && echo '# Neofetch megjelenítése' >> /home/vps/.bashrc \
-    && echo 'neofetch' >> /home/vps/.bashrc \
-    && echo '' >> /home/vps/.bashrc \
-    && echo '# Szép prompt' >> /home/vps/.bashrc \
-    && echo 'export PS1="\[\033[1;32m\]┌──(\[\033[1;34m\]\u@render-vps\[\033[1;32m\])-[\[\033[0;37m\]\w\[\033[1;32m\]]\n└─\[\033[1;34m\]\$\[\033[0m\] "' >> /home/vps/.bashrc
-
-# Home mappa tulajdonos
-RUN chown -R vps:vps /home/vps
+RUN echo '' >> /root/.bashrc \
+    && echo '# Neofetch megjelenítése' >> /root/.bashrc \
+    && echo 'neofetch' >> /root/.bashrc \
+    && echo '' >> /root/.bashrc \
+    && echo '# Szép prompt' >> /root/.bashrc \
+    && echo 'export PS1="\[\033[1;31m\]┌──(\[\033[1;34m\]root@render-vps\[\033[1;31m\])-[\[\033[0;37m\]\w\[\033[1;31m\]]\n└─\[\033[1;34m\]#\[\033[0m\] "' >> /root/.bashrc
 
 # ============================================
 # Munkamappa
 # ============================================
-WORKDIR /home/vps
+WORKDIR /root
 
 # Startup script
 COPY start.sh /start.sh
