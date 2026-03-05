@@ -1,49 +1,101 @@
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV TZ=Europe/Budapest
+ENV PORT=10000
 
+# ── Alapvető csomagok telepítése ──
 RUN apt-get update && apt-get install -y \
+    openssh-server \
     nginx \
-    neofetch htop procps psmisc lsof vim nano \
-    curl wget net-tools iproute2 iputils-ping \
-    dnsutils traceroute nmap git python3 python3-pip \
-    nodejs npm build-essential tmux screen zsh \
-    openssh-server tmate sudo unzip zip tar tree jq \
-    locales software-properties-common ca-certificates gnupg \
+    neofetch \
+    curl \
+    wget \
+    nano \
+    vim \
+    git \
+    htop \
+    sudo \
+    supervisor \
+    net-tools \
+    iputils-ping \
+    dnsutils \
+    python3 \
+    python3-pip \
+    nodejs \
+    npm \
+    unzip \
+    zip \
+    tmux \
+    screen \
+    jq \
     && rm -rf /var/lib/apt/lists/*
 
-RUN locale-gen en_US.UTF-8 && locale-gen hu_HU.UTF-8
-ENV LANG=en_US.UTF-8
-ENV LC_ALL=en_US.UTF-8
+# ── SSH Tunnel eszköz (bore) ──
+RUN curl -fsSL \
+    https://github.com/ekzhang/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-unknown-linux-musl.tar.gz \
+    | tar xz -C /usr/local/bin/ && chmod +x /usr/local/bin/bore || echo "Bore telepítés kihagyva"
 
-RUN curl -fsSL https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 \
-    -o /usr/local/bin/ttyd && chmod +x /usr/local/bin/ttyd
+# ── SSH szerver konfigurálása ──
+RUN mkdir -p /var/run/sshd && \
+    mkdir -p /root/.ssh && \
+    chmod 700 /root/.ssh
 
-RUN curl -fsSL https://github.com/ekzhang/bore/releases/download/v0.5.2/bore-v0.5.2-x86_64-unknown-linux-musl.tar.gz \
-    -o bore.tar.gz \
-    && tar xzf bore.tar.gz \
-    && mv bore /usr/local/bin/ \
-    && chmod +x /usr/local/bin/bore \
-    && rm bore.tar.gz
+# Root jelszó beállítása
+RUN echo 'root:Linux2024!' | chpasswd
 
-RUN mkdir -p /var/run/sshd && ssh-keygen -A \
-    && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \
-    && sed -i 's/#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config \
-    && sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+# SSH konfiguráció
+RUN sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
+    echo "ClientAliveInterval 120" >> /etc/ssh/sshd_config && \
+    echo "ClientAliveCountMax 3" >> /etc/ssh/sshd_config
 
-RUN mkdir -p /root/projects /root/uploads /root/downloads /root/scripts
+# SSH kulcsok generálása
+RUN ssh-keygen -A
 
-RUN echo '' >> /root/.bashrc \
-    && echo 'neofetch' >> /root/.bashrc \
-    && echo 'export PS1="\[\033[1;31m\]┌──(\[\033[1;34m\]root@render-vps\[\033[1;31m\])-[\[\033[0;37m\]\w\[\033[1;31m\]]\n└─\[\033[1;34m\]#\[\033[0m\] "' >> /root/.bashrc \
-    && echo 'export TERM=xterm-256color' >> /root/.bashrc \
-    && echo 'alias ll="ls -lah"' >> /root/.bashrc \
-    && echo 'alias info="cat /tmp/ssh-info.txt 2>/dev/null || cat /tmp/tmate-ssh.txt 2>/dev/null"' >> /root/.bashrc
+# ── Admin felhasználó létrehozása ──
+RUN useradd -m -s /bin/bash admin && \
+    echo 'admin:Linux2024!' | chpasswd && \
+    usermod -aG sudo admin && \
+    echo 'admin ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers && \
+    mkdir -p /home/admin/.ssh && \
+    chmod 700 /home/admin/.ssh && \
+    chown admin:admin /home/admin/.ssh
 
-WORKDIR /root
+# ── Neofetch automatikus futtatás bejelentkezéskor ──
+RUN echo 'neofetch' >> /root/.bashrc && \
+    echo 'neofetch' >> /home/admin/.bashrc && \
+    echo 'echo "╔════════════════════════════════════════╗"' >> /root/.bashrc && \
+    echo 'echo "║  SSH Tunnel: lásd /var/log/bore.log  ║"' >> /root/.bashrc && \
+    echo 'echo "╚════════════════════════════════════════╝"' >> /root/.bashrc
 
+# ── Munkamappák létrehozása ──
+RUN mkdir -p /var/www/html && \
+    mkdir -p /root/projects && \
+    mkdir -p /home/admin/projects && \
+    chown -R admin:admin /home/admin/projects
+
+# ── Egyszerű info oldal ──
+RUN echo '<!DOCTYPE html><html><head><title>Linux Server</title></head><body style="background:#0d1117;color:#58a6ff;font-family:sans-serif;padding:50px;text-align:center;"><h1>🐧 Linux Server Running</h1><p>SSH csatlakozás: Nézd a logokat!</p><pre id="log"></pre><script>fetch("/tunnel.txt").then(r=>r.text()).then(t=>document.getElementById("log").textContent=t);</script></body></html>' > /var/www/html/index.html
+
+# ── Nginx konfiguráció ──
+RUN echo 'server { \n\
+    listen 10000 default_server; \n\
+    root /var/www/html; \n\
+    index index.html; \n\
+    location / { try_files $uri $uri/ =404; } \n\
+    location /tunnel.txt { \n\
+        default_type text/plain; \n\
+        add_header Cache-Control "no-cache"; \n\
+    } \n\
+}' > /etc/nginx/sites-available/default
+
+# ── Konfigurációs fájlok másolása ──
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
+
+EXPOSE 10000
 
 CMD ["/start.sh"]
