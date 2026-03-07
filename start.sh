@@ -1,71 +1,109 @@
 #!/bin/bash
 set -e
 
+BORE_PORT="${BORE_PORT:-48251}"
+
 echo "════════════════════════════════════════"
-echo "  🐧 Dropbear SSH + Web Terminal"
+echo "  🐧 Linux Server + Screen Support"
 echo "  🔑 Jelszó: 2003"
+echo "  📌 Fix SSH port: ${BORE_PORT}"
 echo "════════════════════════════════════════"
 
 # ── Jelszavak ──
 echo 'root:2003' | chpasswd
 echo 'admin:2003' | chpasswd
-echo "[OK] Jelszó beállítva: 2003"
+echo "[OK] Jelszó: 2003"
 
-# ── /dev/pts javítás (PTY terminálhoz kell) ──
-echo "[INFO] PTY beállítása..."
-mkdir -p /dev/pts
-mount -t devpts devpts /dev/pts -o gid=5,mode=620 2>/dev/null || true
-chmod 666 /dev/ptmx 2>/dev/null || true
-echo "[OK] PTY kész"
+# ── Screen könyvtár fix ──
+mkdir -p /var/run/screen
+chmod 777 /var/run/screen
+chmod +t /var/run/screen
+mkdir -p /var/log/screen
+chmod 777 /var/log/screen
+mkdir -p /root/.screen-sessions
+echo "[OK] Screen könyvtárak kész"
 
-# ── Dropbear SSH teszt ──
-echo "[INFO] Dropbear SSH teszt..."
-dropbear -F -E -p 22 -R -B 2>/dev/null &
-DBPID=$!
-sleep 1
-if kill -0 $DBPID 2>/dev/null; then
-    echo "[OK] Dropbear SSH működik"
-    kill $DBPID 2>/dev/null
-else
-    echo "[WARN] Dropbear probléma, de folytatjuk"
-fi
+# ── Indításkori cleanup ──
+echo "[INFO] Indításkori memória tisztítás..."
+apt-get clean 2>/dev/null || true
+journalctl --vacuum-size=50M 2>/dev/null || true
+find /tmp -type f -mtime +1 -delete 2>/dev/null || true
+pip3 cache purge 2>/dev/null || true
+echo "[OK] Cleanup kész"
 
 # ── SFTP info ──
-cat > /var/www/html/sftp.txt << 'EOF'
-⏳ Tunnel indítása...
-Kérlek várj 15 másodpercet!
+cat > /var/www/html/sftp.txt << EOF
+Tunnel indítása (port: ${BORE_PORT})...
+Várj 15 másodpercet!
+
+ssh root@bore.pub -p ${BORE_PORT}
 Jelszó: 2003
 EOF
 
+# ── Bore wrapper script ──
+cat > /usr/local/bin/bore-wrapper.sh << BORESCRIPT
+#!/bin/bash
+echo "[BORE] Fix port: ${BORE_PORT}"
+
+while true; do
+    echo "[BORE] \$(date '+%H:%M:%S') Csatlakozás bore.pub:${BORE_PORT}..."
+    /usr/local/bin/bore local 22 --to bore.pub --port ${BORE_PORT} 2>&1
+    echo "[BORE] \$(date '+%H:%M:%S') Megszakadt, újra 5mp múlva..."
+    sleep 5
+done
+BORESCRIPT
+
+chmod +x /usr/local/bin/bore-wrapper.sh
+
+# ── Keep-Alive script ──
+cat > /usr/local/bin/keep-alive.sh << 'KEEPALIVE'
+#!/bin/bash
+RENDER_URL="${RENDER_EXTERNAL_URL:-}"
+echo "[KEEP-ALIVE] Indítás..."
+echo "[KEEP-ALIVE] URL: $RENDER_URL"
+
+while true; do
+    sleep 300
+    TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[KEEP-ALIVE] Ping: $TIMESTAMP"
+    if [ -n "$RENDER_URL" ]; then
+        curl -s -o /dev/null -w "External: %{http_code}\n" "$RENDER_URL" 2>/dev/null || true
+    fi
+    curl -s -o /dev/null "http://127.0.0.1:6969" 2>/dev/null || true
+    echo "[KEEP-ALIVE] OK"
+done
+KEEPALIVE
+
+chmod +x /usr/local/bin/keep-alive.sh
+
 # ── SFTP frissítő ──
-cat > /usr/local/bin/update-sftp.sh << 'SCRIPT'
+cat > /usr/local/bin/update-sftp.sh << SCRIPT
 #!/bin/bash
 while sleep 5; do
     if [ -f /var/log/bore.log ]; then
-        ADDR=$(grep -oE 'bore\.pub:[0-9]+' /var/log/bore.log 2>/dev/null | tail -1)
-        if [ -n "$ADDR" ]; then
-            HOST=$(echo "$ADDR" | cut -d: -f1)
-            PORT=$(echo "$ADDR" | cut -d: -f2)
+        if grep -q 'bore\.pub' /var/log/bore.log 2>/dev/null; then
+            SCREEN_COUNT=\$(screen -list 2>/dev/null | grep -c "\..*(" || echo 0)
             cat > /var/www/html/sftp.txt << EOF
-✅ SZERVER AKTÍV!
+AKTIV
 
-SSH csatlakozás:
-  ssh root@${HOST} -p ${PORT}
-  Jelszó: 2003
+SSH: ssh root@bore.pub -p ${BORE_PORT}
+Jelszó: 2003
 
 FileZilla (SFTP):
-  Host: ${HOST}
-  Port: ${PORT}
+  Protocol: SFTP
+  Host: bore.pub
+  Port: ${BORE_PORT}
   User: root
   Pass: 2003
 
-PuTTY:
-  Host: ${HOST}
-  Port: ${PORT}
-  User: root
-  Pass: 2003
+📌 Fix port: ${BORE_PORT}
 
-Frissítve: $(date '+%H:%M:%S')
+📺 Screen session-ök: \${SCREEN_COUNT}
+
+✅ Keep-Alive AKTÍV
+   Szerver 24/7 fut!
+
+Frissítve: \$(date '+%H:%M:%S')
 EOF
         fi
     fi
@@ -74,6 +112,22 @@ SCRIPT
 
 chmod +x /usr/local/bin/update-sftp.sh
 
-# ── Supervisord ──
-echo "[INFO] Szolgáltatások indítása..."
+# ── Auto cleanup ──
+cat > /usr/local/bin/auto-cleanup.sh << 'AUTOCLEAN'
+#!/bin/bash
+while true; do
+    CURRENT_HOUR=$(date +%H)
+    if [ "$CURRENT_HOUR" -eq 3 ]; then
+        echo "[AUTO-CLEANUP] $(date) - Cleanup indítása..."
+        /usr/local/bin/cleanup.sh >> /var/log/cleanup.log 2>&1
+        echo "[AUTO-CLEANUP] Kész!"
+        sleep 3600
+    fi
+    sleep 300
+done
+AUTOCLEAN
+
+chmod +x /usr/local/bin/auto-cleanup.sh
+
+echo "[INFO] Supervisord indítása..."
 exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
