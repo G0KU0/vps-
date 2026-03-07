@@ -7,3 +7,5 @@ services:
     envVars:
       - key: PORT
         value: "6969"
+      - key: BORE_PORT
+        value: "48251"
