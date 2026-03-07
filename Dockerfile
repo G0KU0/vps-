@@ -56,40 +56,25 @@ RUN echo 'root:2003' | chpasswd && \
     usermod -aG sudo admin && \
     echo 'admin ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
-# ════════════════════════════════════════════════
-# ── SCREEN KÖNYVTÁR ÉS JOGOSULTSÁGOK ──
-# ════════════════════════════════════════════════
+# ── Screen könyvtárak és jogosultságok ──
 RUN mkdir -p /var/run/screen && \
     chmod 777 /var/run/screen && \
-    chmod +t /var/run/screen
+    chmod +t /var/run/screen && \
+    mkdir -p /var/log/screen && \
+    chmod 777 /var/log/screen && \
+    mkdir -p /root/.screen-sessions
 
 # ── Screen konfiguráció (root) ──
 RUN cat > /root/.screenrc << 'SCREENRC'
-# Ne jelenjen meg copyright üzenet
 startup_message off
-
-# Automatikus detach ha megszakad a kapcsolat
 autodetach on
-
-# Scrollback buffer méret (10000 sor)
 defscrollback 10000
-
-# Zombie ablak - ne záródjon be ha kilép a program
-# 'cr' = c-vel Close, r-vel Resurrect (újraindít)
 zombie cr
-
-# Státuszsor alul
 hardstatus alwayslastline
 hardstatus string '%{= kG}[ %{G}%H %{g}][%= %{= kw}%?%-Lw%?%{r}(%{W}%n*%f%t%?(%u)%?%{r})%{w}%?%+Lw%?%?%= %{g}][%{B} %m/%d %{W}%c %{g}]'
-
-# UTF-8 támogatás
 defutf8 on
-
-# Log bekapcsolása
 deflog on
 logfile /var/log/screen/screenlog.%n.%t
-
-# Ha a shell kilép, tartsa meg az ablakot
 shell -/bin/bash
 SCREENRC
 
@@ -97,21 +82,13 @@ SCREENRC
 RUN cp /root/.screenrc /home/admin/.screenrc && \
     chown admin:admin /home/admin/.screenrc
 
-# ── Screen log mappa ──
-RUN mkdir -p /var/log/screen && chmod 777 /var/log/screen
-
-# ════════════════════════════════════════════════
+# ══════════════════════════════════════════
 # ── SCREEN HELPER SCRIPTEK ──
-# ════════════════════════════════════════════════
+# ══════════════════════════════════════════
 
-# ── sstart: Indít egy nevesített screen session-t ──
+# ── sstart: Session indítás ──
 RUN cat > /usr/local/bin/sstart << 'SSTART'
 #!/bin/bash
-# Használat: sstart <session_név> <parancs>
-# Példa:    sstart mybot "python3 bot.py"
-#           sstart webserver "node app.js"
-#           sstart minecraft "java -jar server.jar"
-
 if [ $# -lt 2 ]; then
     echo "════════════════════════════════════════════"
     echo "  📺 SCREEN SESSION INDÍTÁS"
@@ -143,49 +120,66 @@ SESSION_NAME="$1"
 shift
 COMMAND="$*"
 
-# Ellenőrzés: fut-e már?
-if screen -list | grep -q "\.${SESSION_NAME}[[:space:]]"; then
+# Már fut?
+if screen -list 2>/dev/null | grep -q "\.${SESSION_NAME}[[:space:]]"; then
     echo "⚠️  '${SESSION_NAME}' már fut!"
     echo "   Csatlakozás: sattach ${SESSION_NAME}"
     echo "   Leállítás:   sstop ${SESSION_NAME}"
     exit 1
 fi
 
-# Mentés a persistent fájlba (újraindítás után is megmarad)
+# Parancs mentése
 mkdir -p /root/.screen-sessions
 echo "$COMMAND" > "/root/.screen-sessions/${SESSION_NAME}.cmd"
 
-# Indítás
-screen -dmS "$SESSION_NAME" bash -c "
-    echo '════════════════════════════════════════'
-    echo '  📺 Screen: ${SESSION_NAME}'
-    echo '  🕐 Indítva: $(date)'
-    echo '  📌 Parancs: ${COMMAND}'
-    echo '  💡 Leválás: Ctrl+A, D'
-    echo '════════════════════════════════════════'
-    echo ''
+# Runner script létrehozása (NEM használ bashrc-t!)
+RUNNER="/root/.screen-sessions/${SESSION_NAME}.sh"
+cat > "$RUNNER" << RUNNER_EOF
+#!/bin/bash
+export SCREEN_CHILD=1
+export TERM=xterm-256color
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+echo '════════════════════════════════════════'
+echo "  📺 Screen: ${SESSION_NAME}"
+echo "  🕐 Indítva: \$(date)"
+echo "  📌 Parancs: ${COMMAND}"
+echo "  💡 Leválás: Ctrl+A, D"
+echo '════════════════════════════════════════'
+echo ''
+
+while true; do
     ${COMMAND}
+    EXIT_CODE=\$?
     echo ''
-    echo '════════════════════════════════════════'
-    echo '  ⏹️  Program leállt: $(date)'
-    echo '  🔄 Újraindítás: srestart ${SESSION_NAME}'
-    echo '════════════════════════════════════════'
-    exec bash
-"
+    echo "════════════════════════════════════════"
+    echo "  ⚠️  Program leállt! (exit: \${EXIT_CODE})"
+    echo "  🔄 Újraindítás 5 másodperc múlva..."
+    echo "  🛑 Végleg leállítás: sstop ${SESSION_NAME}"
+    echo "════════════════════════════════════════"
+    sleep 5
+done
+RUNNER_EOF
+chmod +x "$RUNNER"
 
-sleep 0.5
+# Screen indítás: --norc --noprofile = NEM tölti be a bashrc-t!
+screen -dmS "$SESSION_NAME" bash --norc --noprofile "$RUNNER"
 
-if screen -list | grep -q "\.${SESSION_NAME}[[:space:]]"; then
+sleep 1
+
+if screen -list 2>/dev/null | grep -q "\.${SESSION_NAME}[[:space:]]"; then
     echo "✅ '${SESSION_NAME}' elindítva!"
     echo "   Parancs: ${COMMAND}"
     echo "   Csatlakozás: sattach ${SESSION_NAME}"
-    echo "   Leválás screen-ben: Ctrl+A, D"
+    echo "   Leválás: Ctrl+A, D"
+    echo ""
+    echo "   ℹ️  Ha a program meghal, automatikusan újraindul!"
 else
     echo "❌ Hiba: '${SESSION_NAME}' nem indult el!"
 fi
 SSTART
 
-# ── slist: Futó screen session-ök listája ──
+# ── slist: Futó session-ök listája ──
 RUN cat > /usr/local/bin/slist << 'SLIST'
 #!/bin/bash
 echo "════════════════════════════════════════════"
@@ -204,7 +198,7 @@ else
     echo "$SESSIONS" | while read line; do
         NAME=$(echo "$line" | awk '{print $1}' | cut -d. -f2-)
         STATE=$(echo "$line" | grep -oP '\((.*?)\)' | tr -d '()')
-        
+
         if [ "$STATE" = "Detached" ]; then
             ICON="🟢"
             STATE_HU="Fut (háttérben)"
@@ -215,13 +209,12 @@ else
             ICON="🟡"
             STATE_HU="$STATE"
         fi
-        
-        # Mentett parancs megjelenítése
+
         CMD=""
         if [ -f "/root/.screen-sessions/${NAME}.cmd" ]; then
             CMD=" │ $(cat /root/.screen-sessions/${NAME}.cmd)"
         fi
-        
+
         echo "  ${ICON} ${NAME} - ${STATE_HU}${CMD}"
     done
     echo ""
@@ -243,7 +236,7 @@ fi
 
 SESSION_NAME="$1"
 
-if screen -list | grep -q "\.${SESSION_NAME}[[:space:]]"; then
+if screen -list 2>/dev/null | grep -q "\.${SESSION_NAME}[[:space:]]"; then
     echo "📺 Csatlakozás: ${SESSION_NAME}"
     echo "💡 Leválás: Ctrl+A, D (a session fut tovább!)"
     echo ""
@@ -268,10 +261,11 @@ fi
 
 if [ "$1" = "all" ]; then
     echo "🛑 Összes session leállítása..."
-    screen -list | grep -oP '\d+\.\K[^\t]+' | while read name; do
+    screen -list 2>/dev/null | grep -oP '\d+\.\K[^\t]+' | while read name; do
         CLEAN_NAME=$(echo "$name" | awk '{print $1}')
         screen -S "$CLEAN_NAME" -X quit 2>/dev/null
         rm -f "/root/.screen-sessions/${CLEAN_NAME}.cmd" 2>/dev/null
+        rm -f "/root/.screen-sessions/${CLEAN_NAME}.sh" 2>/dev/null
         echo "  ⏹️  ${CLEAN_NAME} leállítva"
     done
     echo "✅ Kész!"
@@ -280,9 +274,10 @@ fi
 
 SESSION_NAME="$1"
 
-if screen -list | grep -q "\.${SESSION_NAME}[[:space:]]"; then
+if screen -list 2>/dev/null | grep -q "\.${SESSION_NAME}[[:space:]]"; then
     screen -S "$SESSION_NAME" -X quit
     rm -f "/root/.screen-sessions/${SESSION_NAME}.cmd" 2>/dev/null
+    rm -f "/root/.screen-sessions/${SESSION_NAME}.sh" 2>/dev/null
     echo "⏹️  '${SESSION_NAME}' leállítva!"
 else
     echo "❌ '${SESSION_NAME}' nem található!"
@@ -310,13 +305,11 @@ fi
 COMMAND=$(cat "$CMD_FILE")
 echo "🔄 '${SESSION_NAME}' újraindítása..."
 
-# Leállítás ha fut
-if screen -list | grep -q "\.${SESSION_NAME}[[:space:]]"; then
+if screen -list 2>/dev/null | grep -q "\.${SESSION_NAME}[[:space:]]"; then
     screen -S "$SESSION_NAME" -X quit 2>/dev/null
-    sleep 1
+    sleep 2
 fi
 
-# Újraindítás
 sstart "$SESSION_NAME" "$COMMAND"
 SRESTART
 
@@ -332,41 +325,39 @@ COUNT=$(screen -list 2>/dev/null | grep -c "\..*(" || echo 0)
 echo "  Aktív session-ök: ${COUNT}"
 echo ""
 
-# Futó session-ök
 screen -list 2>/dev/null | grep -E '\t' | while read line; do
     FULL=$(echo "$line" | awk '{print $1}')
     PID=$(echo "$FULL" | cut -d. -f1)
     NAME=$(echo "$FULL" | cut -d. -f2-)
     STATE=$(echo "$line" | grep -oP '\((.*?)\)' | tr -d '()')
-    
+
     echo "  ┌─ 📺 ${NAME}"
     echo "  │  PID: ${PID}"
     echo "  │  Állapot: ${STATE}"
-    
+
     if [ -f "/root/.screen-sessions/${NAME}.cmd" ]; then
         echo "  │  Parancs: $(cat /root/.screen-sessions/${NAME}.cmd)"
     fi
-    
-    # Log fájl mérete
+
     LOGFILE="/var/log/screen/screenlog.*.${NAME}"
     if ls $LOGFILE 1>/dev/null 2>&1; then
         SIZE=$(du -sh $LOGFILE 2>/dev/null | awk '{print $1}')
         echo "  │  Log méret: ${SIZE}"
     fi
-    
+
     echo "  └──────────────────────────────"
     echo ""
 done
 
-# Mentett (nem futó) session-ök
 if [ -d "/root/.screen-sessions" ]; then
     SAVED=$(ls /root/.screen-sessions/*.cmd 2>/dev/null)
     if [ -n "$SAVED" ]; then
         echo "  📁 Mentett parancsok (srestart-hoz):"
         for f in /root/.screen-sessions/*.cmd; do
+            [ -f "$f" ] || continue
             NAME=$(basename "$f" .cmd)
             CMD=$(cat "$f")
-            if screen -list | grep -q "\.${NAME}[[:space:]]"; then
+            if screen -list 2>/dev/null | grep -q "\.${NAME}[[:space:]]"; then
                 echo "    🟢 ${NAME}: ${CMD}"
             else
                 echo "    ⚪ ${NAME}: ${CMD} (nem fut)"
@@ -387,43 +378,40 @@ RUN chmod +x /usr/local/bin/sstart \
              /usr/local/bin/srestart \
              /usr/local/bin/sstatus
 
-# ── Screen session watchdog (supervisor fogja futtatni) ──
+# ── Screen watchdog ──
 RUN cat > /usr/local/bin/screen-watchdog.sh << 'WATCHDOG'
 #!/bin/bash
-# Ez a script figyeli a mentett session-öket
-# Ha valami meghal, újraindítja
-
 echo "[SCREEN-WATCHDOG] Indítás..."
 
 while true; do
     sleep 30
-    
-    # Screen könyvtár ellenőrzés
+
     if [ ! -d /var/run/screen ]; then
         mkdir -p /var/run/screen
         chmod 777 /var/run/screen
         chmod +t /var/run/screen
+        echo "[SCREEN-WATCHDOG] /var/run/screen újra létrehozva!"
     fi
-    
-    # Mentett session-ök ellenőrzése
+
     if [ -d /root/.screen-sessions ]; then
         for cmd_file in /root/.screen-sessions/*.cmd 2>/dev/null; do
             [ -f "$cmd_file" ] || continue
-            
+
             NAME=$(basename "$cmd_file" .cmd)
-            COMMAND=$(cat "$cmd_file")
-            
-            # Ha nem fut, újraindítás
+            RUNNER="/root/.screen-sessions/${NAME}.sh"
+
             if ! screen -list 2>/dev/null | grep -q "\.${NAME}[[:space:]]"; then
-                echo "[SCREEN-WATCHDOG] $(date '+%H:%M:%S') '${NAME}' nem fut, újraindítás..."
-                screen -dmS "$NAME" bash -c "
-                    echo '🔄 Újraindítva: $(date)'
-                    echo 'Parancs: ${COMMAND}'
-                    echo ''
-                    ${COMMAND}
-                    exec bash
-                "
-                echo "[SCREEN-WATCHDOG] '${NAME}' újraindítva!"
+                if [ -f "$RUNNER" ]; then
+                    echo "[SCREEN-WATCHDOG] $(date '+%H:%M:%S') '${NAME}' nem fut, újraindítás..."
+                    screen -dmS "$NAME" bash --norc --noprofile "$RUNNER"
+                    echo "[SCREEN-WATCHDOG] '${NAME}' újraindítva!"
+                    sleep 2
+                else
+                    COMMAND=$(cat "$cmd_file")
+                    echo "[SCREEN-WATCHDOG] Runner hiányzik: ${NAME}, létrehozás..."
+                    sstart "$NAME" "$COMMAND"
+                    sleep 2
+                fi
             fi
         done
     fi
@@ -432,10 +420,11 @@ WATCHDOG
 
 RUN chmod +x /usr/local/bin/screen-watchdog.sh
 
-# ── Shell beállítás ──
+# ── Shell beállítás (Screen-ben NEM fut neofetch!) ──
 RUN cat > /root/.bashrc << 'BASHRC'
 export PS1='\[\033[01;32m\]\u@Szaby\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export TERM=xterm-256color
 alias ls='ls --color=auto'
 alias ll='ls -lah'
 alias cls='clear'
@@ -443,12 +432,11 @@ alias neo='neofetch'
 alias info='clear && neofetch && echo "" && cat /var/www/html/sftp.txt'
 alias cleanup='bash /usr/local/bin/cleanup.sh'
 alias mem='free -h && echo "" && df -h /'
-
-# Screen aliasok
 alias sl='slist'
 alias ss='sstatus'
 
-if [ -t 1 ] && [ ! -f /tmp/.neofetch_shown ]; then
+# Screen-ben NEM fut neofetch!
+if [ -t 1 ] && [ -z "$STY" ] && [ -z "$SCREEN_CHILD" ] && [ ! -f /tmp/.neofetch_shown ]; then
     touch /tmp/.neofetch_shown
     clear
     neofetch 2>/dev/null
@@ -468,8 +456,6 @@ if [ -t 1 ] && [ ! -f /tmp/.neofetch_shown ]; then
     echo "     sstatus                 - Részletes info"
     echo "═══════════════════════════════════════════════"
     echo ""
-    
-    # Futó screen session-ök megjelenítése
     SCREEN_COUNT=$(screen -list 2>/dev/null | grep -c "\..*(" || echo 0)
     if [ "$SCREEN_COUNT" -gt 0 ]; then
         echo "  📺 Futó screen session-ök: ${SCREEN_COUNT}"
@@ -546,8 +532,7 @@ CLEANUP
 RUN chmod +x /usr/local/bin/cleanup.sh
 
 # ── Munkamappák ──
-RUN mkdir -p /var/www/html /root/projects /home/admin/projects \
-             /root/.screen-sessions && \
+RUN mkdir -p /var/www/html /root/projects /home/admin/projects && \
     chown -R admin:admin /home/admin
 
 # ── Weboldal ──
@@ -646,7 +631,9 @@ sstop all                          # Összes leállítása</pre>
 info              # Rendszer info
 mem               # Memória állapot
 cleanup           # Memória tisztítás
-htop              # Folyamatok</pre>
+htop              # Folyamatok
+sl                # = slist
+ss                # = sstatus</pre>
         </div>
     </div>
 </div>
@@ -681,13 +668,19 @@ load();setInterval(load,3000);
 </html>
 HTML
 
-# ── Nginx ──
+# ── Nginx (health endpoint-tal!) ──
 RUN cat > /etc/nginx/sites-available/default << 'NGINX'
 server {
     listen 6969 default_server;
     server_name _;
     root /var/www/html;
     index index.html;
+
+    location /health {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 'OK';
+    }
 
     location / {
         try_files $uri $uri/ =404;
