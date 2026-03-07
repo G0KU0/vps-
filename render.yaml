@@ -9,3 +9,5 @@ services:
         value: "6969"
       - key: BORE_PORT
         value: "48252"
+      - key: SCREEN_SESSIONS
+        value: ""
