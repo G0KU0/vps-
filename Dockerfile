@@ -94,7 +94,7 @@ RUN mkdir -p /etc/supervisor/conf.d/user-processes \
              /var/log/user-processes
 
 # ── pstart: Persistent process indítás (SUPERVISOR ALAPÚ!) ──
-RUN cat > /usr/local/bin/pstart << 'PSTART'
+RUN cat > /usr/local/bin/pstart << 'EOF'
 #!/bin/bash
 # ═══════════════════════════════════════════════════
 #  PERSISTENT PROCESS START - Supervisor alapú
@@ -214,10 +214,10 @@ else
     echo "   Log: plog ${PROC_NAME}"
     echo "   Error log: cat /var/log/user-processes/${PROC_NAME}.error.log"
 fi
-PSTART
+EOF
 
 # ── pstop: Persistent process leállítása ──
-RUN cat > /usr/local/bin/pstop << 'PSTOP'
+RUN cat > /usr/local/bin/pstop << 'EOF'
 #!/bin/bash
 if [ $# -lt 1 ]; then
     echo "Használat: pstop <név>"
@@ -263,10 +263,10 @@ supervisorctl reread > /dev/null 2>&1
 supervisorctl update > /dev/null 2>&1
 
 echo "✅ '${PROC_NAME}' leállítva és eltávolítva!"
-PSTOP
+EOF
 
-# ── plist: Futó persistent processek listája ──
-RUN cat > /usr/local/bin/plist << 'PLIST'
+# ── plist: Futó persistent processek listája (JAVÍTOTT!) ──
+RUN cat > /usr/local/bin/plist << 'EOF'
 #!/bin/bash
 echo "════════════════════════════════════════════"
 echo "  🚀 PERSISTENT PROCESSEK"
@@ -274,7 +274,7 @@ echo "════════════════════════�
 
 HAS_PROCS=false
 
-for conf in /etc/supervisor/conf.d/user-*.conf 2>/dev/null; do
+for conf in /etc/supervisor/conf.d/user-*.conf; do
     [ -f "$conf" ] || continue
     HAS_PROCS=true
     
@@ -310,6 +310,13 @@ for conf in /etc/supervisor/conf.d/user-*.conf 2>/dev/null; do
             echo "     Állapot: Indulóban..."
             [ -n "$CMD" ] && echo "     Parancs: ${CMD}"
             ;;
+        BACKOFF)
+            echo ""
+            echo "  🔴 ${NAME}"
+            echo "     Állapot: HIBA (BACKOFF)"
+            [ -n "$CMD" ] && echo "     Parancs: ${CMD}"
+            echo "     Error: plog ${NAME} err"
+            ;;
         *)
             echo ""
             echo "  ⚪ ${NAME}"
@@ -331,10 +338,10 @@ echo "════════════════════════�
 echo "  pstart <n> <cmd>  │ pstop <n>  │ prestart <n>"
 echo "  plog <n>          │ pstatus    │ pstop all"
 echo "════════════════════════════════════════════"
-PLIST
+EOF
 
 # ── prestart: Persistent process újraindítása ──
-RUN cat > /usr/local/bin/prestart << 'PRESTART'
+RUN cat > /usr/local/bin/prestart << 'EOF'
 #!/bin/bash
 if [ $# -lt 1 ]; then
     echo "Használat: prestart <név>"
@@ -362,10 +369,10 @@ else
     echo "⚠️  Állapot: ${STATUS}"
     echo "   Log: plog ${PROC_NAME}"
 fi
-PRESTART
+EOF
 
 # ── plog: Persistent process logja ──
-RUN cat > /usr/local/bin/plog << 'PLOG'
+RUN cat > /usr/local/bin/plog << 'EOF'
 #!/bin/bash
 if [ $# -lt 1 ]; then
     echo "Használat: plog <név>        - Utolsó 50 sor"
@@ -403,10 +410,10 @@ else
         echo "Nincs log fájl még."
     fi
 fi
-PLOG
+EOF
 
 # ── pstatus: Részletes állapot ──
-RUN cat > /usr/local/bin/pstatus << 'PSTATUS'
+RUN cat > /usr/local/bin/pstatus << 'EOF'
 #!/bin/bash
 echo "═══════════════════════════════════════════════════"
 echo "  🚀 PERSISTENT PROCESSEK - RÉSZLETES ÁLLAPOT"
@@ -475,14 +482,14 @@ df -h / | tail -1 | awk '{printf "    Disk: %s / %s (%s)\n", $3, $2, $5}'
 
 echo ""
 echo "═══════════════════════════════════════════════════"
-PSTATUS
+EOF
 
 # ════════════════════════════════════════════════
 # ── SCREEN HELPER SCRIPTEK (JAVÍTOTT setsid-del)
 # ════════════════════════════════════════════════
 
 # ── sstart: Screen session indítás (JAVÍTOTT - setsid!) ──
-RUN cat > /usr/local/bin/sstart << 'SSTART'
+RUN cat > /usr/local/bin/sstart << 'EOF'
 #!/bin/bash
 # JAVÍTOTT: setsid-del teljesen leválasztja az SSH session-ről!
 
@@ -540,10 +547,10 @@ if screen -list | grep -q "\.${SESSION_NAME}[[:space:]]"; then
 else
     echo "❌ Nem indult el! Próbáld: pstart ${SESSION_NAME} \"${COMMAND}\""
 fi
-SSTART
+EOF
 
 # ── slist: Futó screen session-ök listája ──
-RUN cat > /usr/local/bin/slist << 'SLIST'
+RUN cat > /usr/local/bin/slist << 'EOF'
 #!/bin/bash
 echo "════════════════════════════════════════════"
 echo "  📺 SCREEN SESSION-ÖK"
@@ -560,7 +567,7 @@ if [ -z "$SESSIONS" ]; then
 else
     echo ""
     echo "$SESSIONS" | while read line; do
-        NAME=$(echo "$line" | awk '{print $1}' | cut -d.-f2-)
+        NAME=$(echo "$line" | awk '{print $1}' | cut -d. -f2-)
         STATE=$(echo "$line" | grep -oP '\((.*?)\)' | tr -d '()')
         
         if [ "$STATE" = "Detached" ]; then
@@ -581,10 +588,10 @@ else
 fi
 echo ""
 echo "════════════════════════════════════════════"
-SLIST
+EOF
 
 # ── sattach ──
-RUN cat > /usr/local/bin/sattach << 'SATTACH'
+RUN cat > /usr/local/bin/sattach << 'EOF'
 #!/bin/bash
 if [ $# -lt 1 ]; then
     echo "Használat: sattach <session_név>"
@@ -599,10 +606,10 @@ else
     echo "❌ '${SESSION_NAME}' nem található!"
     slist
 fi
-SATTACH
+EOF
 
 # ── sstop ──
-RUN cat > /usr/local/bin/sstop << 'SSTOP'
+RUN cat > /usr/local/bin/sstop << 'EOF'
 #!/bin/bash
 if [ $# -lt 1 ]; then
     echo "Használat: sstop <név> | sstop all"
@@ -627,10 +634,10 @@ if screen -list | grep -q "\.${SESSION_NAME}[[:space:]]"; then
 else
     echo "❌ '${SESSION_NAME}' nem található!"
 fi
-SSTOP
+EOF
 
 # ── srestart ──
-RUN cat > /usr/local/bin/srestart << 'SRESTART'
+RUN cat > /usr/local/bin/srestart << 'EOF'
 #!/bin/bash
 if [ $# -lt 1 ]; then
     echo "Használat: srestart <név>"
@@ -647,13 +654,13 @@ echo "🔄 '${SESSION_NAME}' újraindítása..."
 screen -S "$SESSION_NAME" -X quit 2>/dev/null
 sleep 1
 sstart "$SESSION_NAME" "$COMMAND"
-SRESTART
+EOF
 
 # ── sstatus ──
-RUN cat > /usr/local/bin/sstatus << 'SSTATUS'
+RUN cat > /usr/local/bin/sstatus << 'EOF'
 #!/bin/bash
 pstatus
-SSTATUS
+EOF
 
 # ── Jogosultságok ──
 RUN chmod +x /usr/local/bin/sstart \
@@ -670,7 +677,7 @@ RUN chmod +x /usr/local/bin/sstart \
              /usr/local/bin/pstatus
 
 # ── Persistent process watchdog ──
-RUN cat > /usr/local/bin/persistent-watchdog.sh << 'WATCHDOG'
+RUN cat > /usr/local/bin/persistent-watchdog.sh << 'EOF'
 #!/bin/bash
 echo "[WATCHDOG] Persistent process watchdog indítás..."
 
@@ -686,7 +693,7 @@ while true; do
     fi
     
     # Ellenőrizd hogy a supervisor conf fájlok szinkronban vannak-e
-    for cmd_file in /root/.persistent-cmds/*.cmd 2>/dev/null; do
+    for cmd_file in /root/.persistent-cmds/*.cmd; do
         [ -f "$cmd_file" ] || continue
         NAME=$(basename "$cmd_file" .cmd)
         CONF="/etc/supervisor/conf.d/user-${NAME}.conf"
@@ -727,7 +734,7 @@ CEOF
     
     # Screen session-ök ellenőrzése
     if [ -d /root/.screen-sessions ]; then
-        for cmd_file in /root/.screen-sessions/*.cmd 2>/dev/null; do
+        for cmd_file in /root/.screen-sessions/*.cmd; do
             [ -f "$cmd_file" ] || continue
             NAME=$(basename "$cmd_file" .cmd)
             COMMAND=$(cat "$cmd_file")
@@ -741,7 +748,7 @@ CEOF
     
     sleep 30
 done
-WATCHDOG
+EOF
 
 RUN chmod +x /usr/local/bin/persistent-watchdog.sh
 
@@ -806,7 +813,7 @@ if [ -t 1 ] && [ ! -f /tmp/.neofetch_shown_$$ ]; then
     if [ "$SCREEN_COUNT" -gt 0 ]; then
         echo "  📺 Screen session-ök: ${SCREEN_COUNT}"
         screen -list 2>/dev/null | grep -E '\t' | while read line; do
-            NAME=$(echo "$line" | awk '{print $1}' | cut -d.  -f2-)
+            NAME=$(echo "$line" | awk '{print $1}' | cut -d. -f2-)
             echo "     📺 ${NAME}"
         done
         echo ""
