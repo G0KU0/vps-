@@ -31,7 +31,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# ── ttyd ──
+# ── ttyd (web terminál) ──
 RUN curl -fsSL https://github.com/tsl0922/ttyd/releases/download/1.7.4/ttyd.x86_64 \
     -o /usr/local/bin/ttyd && chmod +x /usr/local/bin/ttyd
 
@@ -49,34 +49,443 @@ RUN rm -f /etc/dropbear/dropbear_rsa_host_key \
     dropbearkey -t ecdsa -f /etc/dropbear/dropbear_ecdsa_host_key && \
     dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key
 
-# ── Felhasználók ──
+# ── Felhasználók (jelszó: 2003) ──
 RUN echo 'root:2003' | chpasswd && \
     useradd -m -s /bin/bash admin && \
     echo 'admin:2003' | chpasswd && \
     usermod -aG sudo admin && \
     echo 'admin ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
-# ── Screen könyvtárak ──
-RUN mkdir -p /var/run/screen && chmod 777 /var/run/screen && chmod +t /var/run/screen && \
-    mkdir -p /var/log/screen && chmod 777 /var/log/screen && \
-    mkdir -p /root/.screen-sessions
+# ════════════════════════════════════════════════
+# ── SCREEN KÖNYVTÁR ÉS JOGOSULTSÁGOK ──
+# ════════════════════════════════════════════════
+RUN mkdir -p /var/run/screen && \
+    chmod 777 /var/run/screen && \
+    chmod +t /var/run/screen
 
-# ── Screen konfiguráció ──
+# ── Screen konfiguráció (root) ──
 RUN cat > /root/.screenrc << 'SCREENRC'
 startup_message off
 autodetach on
 defscrollback 10000
+zombie cr
+hardstatus alwayslastline
+hardstatus string '%{= kG}[ %{G}%H %{g}][%= %{= kw}%?%-Lw%?%{r}(%{W}%n*%f%t%?(%u)%?%{r})%{w}%?%+Lw%?%?%= %{g}][%{B} %m/%d %{W}%c %{g}]'
 defutf8 on
+deflog on
+logfile /var/log/screen/screenlog.%n.%t
+shell -/bin/bash
 SCREENRC
-RUN cp /root/.screenrc /home/admin/.screenrc && chown admin:admin /home/admin/.screenrc
 
-# ══════════════════════════════════════════════════════
-# ── SCREEN PARANCSOK ──
-# ══════════════════════════════════════════════════════
+# ── Screen konfiguráció (admin) ──
+RUN cp /root/.screenrc /home/admin/.screenrc && \
+    chown admin:admin /home/admin/.screenrc
 
-# ── sstart: Session indítás ──
+# ── Screen log mappa ──
+RUN mkdir -p /var/log/screen && chmod 777 /var/log/screen
+
+# ════════════════════════════════════════════════════════
+# ── PERSISTENT PROCESS MANAGEMENT (SUPERVISOR ALAPÚ) ──
+# ════════════════════════════════════════════════════════
+
+# ── User process config mappa ──
+RUN mkdir -p /etc/supervisor/conf.d/user-processes \
+             /root/.persistent-cmds \
+             /var/log/user-processes
+
+# ── pstart: Persistent process indítás (SUPERVISOR ALAPÚ!) ──
+RUN cat > /usr/local/bin/pstart << 'PSTART'
+#!/bin/bash
+# ═══════════════════════════════════════════════════
+#  PERSISTENT PROCESS START - Supervisor alapú
+#  A folyamat NEM hal meg SSH kilépésnél!
+#  Túléli a kapcsolat bontását!
+# ═══════════════════════════════════════════════════
+
+if [ $# -lt 2 ]; then
+    echo "════════════════════════════════════════════"
+    echo "  🚀 PERSISTENT PROCESS INDÍTÁS"
+    echo "════════════════════════════════════════════"
+    echo ""
+    echo "  Használat: pstart <név> <parancs>"
+    echo ""
+    echo "  Példák:"
+    echo "    pstart mybot \"python3 /root/bot.py\""
+    echo "    pstart webserver \"node /root/app.js\""
+    echo "    pstart loop \"bash /root/myscript.sh\""
+    echo "    pstart teszt \"python3 -m http.server 8080\""
+    echo ""
+    echo "  ⚡ A folyamat supervisord alatt fut!"
+    echo "     SSH kilépés NEM állítja le!"
+    echo ""
+    echo "  Kezelés:"
+    echo "    plist              - Futó folyamatok"
+    echo "    pstop <név>        - Leállítás"
+    echo "    prestart <név>     - Újraindítás"
+    echo "    plog <név>         - Log megtekintés"
+    echo "    pstatus            - Részletes állapot"
+    echo "════════════════════════════════════════════"
+    exit 1
+fi
+
+PROC_NAME="$1"
+shift
+COMMAND="$*"
+
+# Érvényes név ellenőrzés
+if [[ ! "$PROC_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    echo "❌ Érvénytelen név! Csak betűk, számok, _ és - használható."
+    exit 1
+fi
+
+CONF_FILE="/etc/supervisor/conf.d/user-${PROC_NAME}.conf"
+CMD_FILE="/root/.persistent-cmds/${PROC_NAME}.cmd"
+WRAPPER="/usr/local/bin/user-proc-${PROC_NAME}.sh"
+
+# Ha már fut, jelezd
+if [ -f "$CONF_FILE" ]; then
+    echo "⚠️  '${PROC_NAME}' már létezik!"
+    echo "   Újraindítás: prestart ${PROC_NAME}"
+    echo "   Leállítás:   pstop ${PROC_NAME}"
+    echo "   Felülírás:   pstop ${PROC_NAME} && pstart ${PROC_NAME} \"${COMMAND}\""
+    exit 1
+fi
+
+echo "🚀 '${PROC_NAME}' indítása supervisor alatt..."
+
+# Mentés (container restart után is megmarad a watchdog-gal)
+echo "$COMMAND" > "$CMD_FILE"
+
+# Wrapper script (hogy a parancs rendesen fusson)
+cat > "$WRAPPER" << WRAPEOF
+#!/bin/bash
+echo "════════════════════════════════════════"
+echo "  🚀 Persistent Process: ${PROC_NAME}"
+echo "  🕐 Indítva: \$(date)"
+echo "  📌 Parancs: ${COMMAND}"
+echo "  ⚡ Supervisor által kezelve"
+echo "════════════════════════════════════════"
+echo ""
+cd /root
+exec ${COMMAND}
+WRAPEOF
+chmod +x "$WRAPPER"
+
+# Supervisor config létrehozás
+cat > "$CONF_FILE" << CONFEOF
+[program:user-${PROC_NAME}]
+command=${WRAPPER}
+directory=/root
+autostart=true
+autorestart=true
+startsecs=2
+startretries=5
+stdout_logfile=/var/log/user-processes/${PROC_NAME}.log
+stderr_logfile=/var/log/user-processes/${PROC_NAME}.error.log
+stdout_logfile_maxbytes=10MB
+stderr_logfile_maxbytes=5MB
+stdout_logfile_backups=2
+stderr_logfile_backups=2
+CONFEOF
+
+# Supervisor frissítés
+supervisorctl reread > /dev/null 2>&1
+supervisorctl update > /dev/null 2>&1
+
+sleep 1
+
+# Ellenőrzés
+STATUS=$(supervisorctl status "user-${PROC_NAME}" 2>/dev/null | awk '{print $2}')
+
+if [ "$STATUS" = "RUNNING" ]; then
+    echo "✅ '${PROC_NAME}' sikeresen elindítva!"
+    echo ""
+    echo "   📌 Parancs: ${COMMAND}"
+    echo "   ⚡ Supervisor által kezelve - SSH kilépés NEM állítja le!"
+    echo ""
+    echo "   Logok:        plog ${PROC_NAME}"
+    echo "   Leállítás:    pstop ${PROC_NAME}"
+    echo "   Újraindítás:  prestart ${PROC_NAME}"
+elif [ "$STATUS" = "STARTING" ]; then
+    echo "⏳ '${PROC_NAME}' indulóban..."
+    echo "   Várd meg pár másodpercet, aztán: plist"
+else
+    echo "⚠️  '${PROC_NAME}' állapot: ${STATUS}"
+    echo "   Log: plog ${PROC_NAME}"
+    echo "   Error log: cat /var/log/user-processes/${PROC_NAME}.error.log"
+fi
+PSTART
+
+# ── pstop: Persistent process leállítása ──
+RUN cat > /usr/local/bin/pstop << 'PSTOP'
+#!/bin/bash
+if [ $# -lt 1 ]; then
+    echo "Használat: pstop <név>"
+    echo "Összes:    pstop all"
+    echo ""
+    plist
+    exit 1
+fi
+
+if [ "$1" = "all" ]; then
+    echo "🛑 Összes felhasználói process leállítása..."
+    for conf in /etc/supervisor/conf.d/user-*.conf; do
+        [ -f "$conf" ] || continue
+        NAME=$(basename "$conf" .conf | sed 's/^user-//')
+        echo "  ⏹️  ${NAME} leállítása..."
+        supervisorctl stop "user-${NAME}" > /dev/null 2>&1
+        rm -f "$conf"
+        rm -f "/usr/local/bin/user-proc-${NAME}.sh"
+        rm -f "/root/.persistent-cmds/${NAME}.cmd"
+    done
+    supervisorctl reread > /dev/null 2>&1
+    supervisorctl update > /dev/null 2>&1
+    echo "✅ Összes leállítva!"
+    exit 0
+fi
+
+PROC_NAME="$1"
+CONF_FILE="/etc/supervisor/conf.d/user-${PROC_NAME}.conf"
+
+if [ ! -f "$CONF_FILE" ]; then
+    echo "❌ '${PROC_NAME}' nem található!"
+    echo ""
+    plist
+    exit 1
+fi
+
+echo "⏹️  '${PROC_NAME}' leállítása..."
+supervisorctl stop "user-${PROC_NAME}" > /dev/null 2>&1
+rm -f "$CONF_FILE"
+rm -f "/usr/local/bin/user-proc-${PROC_NAME}.sh"
+rm -f "/root/.persistent-cmds/${PROC_NAME}.cmd"
+supervisorctl reread > /dev/null 2>&1
+supervisorctl update > /dev/null 2>&1
+
+echo "✅ '${PROC_NAME}' leállítva és eltávolítva!"
+PSTOP
+
+# ── plist: Futó persistent processek listája ──
+RUN cat > /usr/local/bin/plist << 'PLIST'
+#!/bin/bash
+echo "════════════════════════════════════════════"
+echo "  🚀 PERSISTENT PROCESSEK"
+echo "════════════════════════════════════════════"
+
+HAS_PROCS=false
+
+for conf in /etc/supervisor/conf.d/user-*.conf 2>/dev/null; do
+    [ -f "$conf" ] || continue
+    HAS_PROCS=true
+    
+    NAME=$(basename "$conf" .conf | sed 's/^user-//')
+    STATUS_LINE=$(supervisorctl status "user-${NAME}" 2>/dev/null)
+    STATUS=$(echo "$STATUS_LINE" | awk '{print $2}')
+    
+    # Parancs
+    CMD=""
+    if [ -f "/root/.persistent-cmds/${NAME}.cmd" ]; then
+        CMD=$(cat "/root/.persistent-cmds/${NAME}.cmd")
+    fi
+    
+    case "$STATUS" in
+        RUNNING)
+            PID=$(echo "$STATUS_LINE" | grep -oP 'pid \K\d+')
+            UPTIME=$(echo "$STATUS_LINE" | grep -oP 'uptime \K.*')
+            echo ""
+            echo "  🟢 ${NAME}"
+            echo "     Állapot: Fut (PID: ${PID})"
+            echo "     Uptime:  ${UPTIME}"
+            [ -n "$CMD" ] && echo "     Parancs: ${CMD}"
+            ;;
+        STOPPED)
+            echo ""
+            echo "  🔴 ${NAME}"
+            echo "     Állapot: Leállítva"
+            [ -n "$CMD" ] && echo "     Parancs: ${CMD}"
+            ;;
+        STARTING)
+            echo ""
+            echo "  🟡 ${NAME}"
+            echo "     Állapot: Indulóban..."
+            [ -n "$CMD" ] && echo "     Parancs: ${CMD}"
+            ;;
+        *)
+            echo ""
+            echo "  ⚪ ${NAME}"
+            echo "     Állapot: ${STATUS}"
+            [ -n "$CMD" ] && echo "     Parancs: ${CMD}"
+            ;;
+    esac
+done
+
+if [ "$HAS_PROCS" = false ]; then
+    echo ""
+    echo "  (nincs persistent process)"
+    echo ""
+    echo "  Indítás: pstart <név> <parancs>"
+fi
+
+echo ""
+echo "════════════════════════════════════════════"
+echo "  pstart <n> <cmd>  │ pstop <n>  │ prestart <n>"
+echo "  plog <n>          │ pstatus    │ pstop all"
+echo "════════════════════════════════════════════"
+PLIST
+
+# ── prestart: Persistent process újraindítása ──
+RUN cat > /usr/local/bin/prestart << 'PRESTART'
+#!/bin/bash
+if [ $# -lt 1 ]; then
+    echo "Használat: prestart <név>"
+    exit 1
+fi
+
+PROC_NAME="$1"
+CONF_FILE="/etc/supervisor/conf.d/user-${PROC_NAME}.conf"
+
+if [ ! -f "$CONF_FILE" ]; then
+    echo "❌ '${PROC_NAME}' nem található!"
+    plist
+    exit 1
+fi
+
+echo "🔄 '${PROC_NAME}' újraindítása..."
+supervisorctl restart "user-${PROC_NAME}" 2>/dev/null
+
+sleep 1
+
+STATUS=$(supervisorctl status "user-${PROC_NAME}" 2>/dev/null | awk '{print $2}')
+if [ "$STATUS" = "RUNNING" ]; then
+    echo "✅ '${PROC_NAME}' újraindítva!"
+else
+    echo "⚠️  Állapot: ${STATUS}"
+    echo "   Log: plog ${PROC_NAME}"
+fi
+PRESTART
+
+# ── plog: Persistent process logja ──
+RUN cat > /usr/local/bin/plog << 'PLOG'
+#!/bin/bash
+if [ $# -lt 1 ]; then
+    echo "Használat: plog <név>        - Utolsó 50 sor"
+    echo "           plog <név> -f     - Élő követés"
+    echo "           plog <név> err    - Error log"
+    exit 1
+fi
+
+PROC_NAME="$1"
+LOGFILE="/var/log/user-processes/${PROC_NAME}.log"
+ERRFILE="/var/log/user-processes/${PROC_NAME}.error.log"
+
+if [ "$2" = "err" ] || [ "$2" = "error" ]; then
+    if [ -f "$ERRFILE" ]; then
+        echo "═══ ERROR LOG: ${PROC_NAME} ═══"
+        tail -50 "$ERRFILE"
+    else
+        echo "Nincs error log."
+    fi
+elif [ "$2" = "-f" ] || [ "$2" = "follow" ]; then
+    if [ -f "$LOGFILE" ]; then
+        echo "═══ ÉLŐ LOG: ${PROC_NAME} (Ctrl+C kilépés) ═══"
+        tail -f "$LOGFILE"
+    else
+        echo "Nincs log fájl még."
+    fi
+else
+    if [ -f "$LOGFILE" ]; then
+        echo "═══ LOG: ${PROC_NAME} (utolsó 50 sor) ═══"
+        tail -50 "$LOGFILE"
+        echo ""
+        echo "Élő követés: plog ${PROC_NAME} -f"
+        echo "Error log:   plog ${PROC_NAME} err"
+    else
+        echo "Nincs log fájl még."
+    fi
+fi
+PLOG
+
+# ── pstatus: Részletes állapot ──
+RUN cat > /usr/local/bin/pstatus << 'PSTATUS'
+#!/bin/bash
+echo "═══════════════════════════════════════════════════"
+echo "  🚀 PERSISTENT PROCESSEK - RÉSZLETES ÁLLAPOT"
+echo "═══════════════════════════════════════════════════"
+echo ""
+
+# Összes supervisor process
+echo "  📊 Supervisor állapot:"
+echo "  ─────────────────────────────────────────────"
+supervisorctl status 2>/dev/null | while read line; do
+    NAME=$(echo "$line" | awk '{print $1}')
+    STATUS=$(echo "$line" | awk '{print $2}')
+    
+    if [[ "$NAME" == user-* ]]; then
+        CLEAN_NAME=$(echo "$NAME" | sed 's/^user-//')
+        case "$STATUS" in
+            RUNNING) ICON="🟢" ;;
+            STOPPED) ICON="🔴" ;;
+            STARTING) ICON="🟡" ;;
+            *) ICON="⚪" ;;
+        esac
+        echo "    ${ICON} [USER] ${CLEAN_NAME}: ${STATUS}"
+    else
+        echo "    ⚙️  [SYS]  ${NAME}: ${STATUS}"
+    fi
+done
+
+echo ""
+echo "  📁 Mentett parancsok:"
+echo "  ─────────────────────────────────────────────"
+if [ -d /root/.persistent-cmds ] && ls /root/.persistent-cmds/*.cmd 1>/dev/null 2>&1; then
+    for f in /root/.persistent-cmds/*.cmd; do
+        NAME=$(basename "$f" .cmd)
+        CMD=$(cat "$f")
+        RUNNING=$(supervisorctl status "user-${NAME}" 2>/dev/null | awk '{print $2}')
+        if [ "$RUNNING" = "RUNNING" ]; then
+            echo "    🟢 ${NAME}: ${CMD}"
+        else
+            echo "    ⚪ ${NAME}: ${CMD} (nem fut)"
+        fi
+    done
+else
+    echo "    (nincs mentett parancs)"
+fi
+
+# Screen session-ök is
+echo ""
+echo "  📺 Screen session-ök:"
+echo "  ─────────────────────────────────────────────"
+SCREEN_COUNT=$(screen -list 2>/dev/null | grep -c "\..*(" || echo 0)
+if [ "$SCREEN_COUNT" -gt 0 ]; then
+    screen -list 2>/dev/null | grep -E '\t' | while read line; do
+        NAME=$(echo "$line" | awk '{print $1}' | cut -d. -f2-)
+        STATE=$(echo "$line" | grep -oP '\((.*?)\)' | tr -d '()')
+        echo "    📺 ${NAME} (${STATE})"
+    done
+else
+    echo "    (nincs screen session)"
+fi
+
+echo ""
+echo "  💾 Memória:"
+echo "  ─────────────────────────────────────────────"
+free -h | grep Mem | awk '{printf "    RAM: %s / %s (szabad: %s)\n", $3, $2, $4}'
+df -h / | tail -1 | awk '{printf "    Disk: %s / %s (%s)\n", $3, $2, $5}'
+
+echo ""
+echo "═══════════════════════════════════════════════════"
+PSTATUS
+
+# ════════════════════════════════════════════════
+# ── SCREEN HELPER SCRIPTEK (JAVÍTOTT setsid-del)
+# ════════════════════════════════════════════════
+
+# ── sstart: Screen session indítás (JAVÍTOTT - setsid!) ──
 RUN cat > /usr/local/bin/sstart << 'SSTART'
 #!/bin/bash
+# JAVÍTOTT: setsid-del teljesen leválasztja az SSH session-ről!
+
 if [ $# -lt 2 ]; then
     echo "════════════════════════════════════════════"
     echo "  📺 SCREEN SESSION INDÍTÁS"
@@ -84,16 +493,13 @@ if [ $# -lt 2 ]; then
     echo ""
     echo "  Használat: sstart <név> <parancs>"
     echo ""
+    echo "  ⚠️  FONTOS: Ha SSH kilépésnél meghal,"
+    echo "     használd inkább: pstart <név> <parancs>"
+    echo "     (az supervisor alapú, 100% túléli!)"
+    echo ""
     echo "  Példák:"
     echo "    sstart mybot \"python3 bot.py\""
-    echo "    sstart web \"node app.js\""
-    echo ""
-    echo "  ✅ Amíg a fájlok megmaradnak, a screen is!"
-    echo ""
-    echo "  Kezelés:"
-    echo "    slist          - Lista"
-    echo "    sattach <név>  - Csatlakozás (Ctrl+A,D kilép)"
-    echo "    sstop <név>    - Leállítás"
+    echo "    pstart mybot \"python3 bot.py\"  ← AJÁNLOTT!"
     echo "════════════════════════════════════════════"
     exit 1
 fi
@@ -102,171 +508,176 @@ SESSION_NAME="$1"
 shift
 COMMAND="$*"
 
-if screen -list 2>/dev/null | grep -q "\.${SESSION_NAME}[[:space:]]"; then
+if screen -list | grep -q "\.${SESSION_NAME}[[:space:]]"; then
     echo "⚠️  '${SESSION_NAME}' már fut!"
-    echo "   Csatlakozás: sattach ${SESSION_NAME}"
     exit 1
 fi
 
-# Mentés
 mkdir -p /root/.screen-sessions
 echo "$COMMAND" > "/root/.screen-sessions/${SESSION_NAME}.cmd"
 
-# Runner script
-cat > "/root/.screen-sessions/${SESSION_NAME}.sh" << EOF
-#!/bin/bash
-export SCREEN_CHILD=1
-export TERM=xterm-256color
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-echo "════════════════════════════════════════"
-echo "  📺 ${SESSION_NAME}"
-echo "  🕐 \$(date)"
-echo "  📌 ${COMMAND}"
-echo "  💡 Leválás: Ctrl+A, D"
-echo "════════════════════════════════════════"
-echo ""
-while true; do
+# ═══ JAVÍTÁS: setsid + nohup ═══
+# Ez teljesen leválasztja az SSH session-ről!
+setsid screen -dmS "$SESSION_NAME" bash -c "
+    echo '════════════════════════════════════════'
+    echo '  📺 Screen: ${SESSION_NAME}'
+    echo '  🕐 Indítva: \$(date)'
+    echo '  📌 Parancs: ${COMMAND}'
+    echo '════════════════════════════════════════'
+    echo ''
     ${COMMAND}
-    echo ""
-    echo "⚠️  Leállt, újraindítás 5mp múlva..."
-    sleep 5
-done
-EOF
-chmod +x "/root/.screen-sessions/${SESSION_NAME}.sh"
+    echo ''
+    echo '  ⏹️  Program leállt'
+    exec bash
+" </dev/null &>/dev/null &
+disown
 
-screen -dmS "$SESSION_NAME" bash --norc --noprofile "/root/.screen-sessions/${SESSION_NAME}.sh"
-sleep 1
+sleep 0.5
 
-if screen -list 2>/dev/null | grep -q "\.${SESSION_NAME}[[:space:]]"; then
-    echo "✅ '${SESSION_NAME}' elindítva!"
-    echo "   Parancs: ${COMMAND}"
-    echo "   Csatlakozás: sattach ${SESSION_NAME}"
-    echo ""
-    echo "   ✅ Amíg a fájlok megvannak, ez is megmarad!"
+if screen -list | grep -q "\.${SESSION_NAME}[[:space:]]"; then
+    echo "✅ '${SESSION_NAME}' elindítva! (setsid-del leválasztva)"
+    echo "   ⚡ Csatlakozás: sattach ${SESSION_NAME}"
 else
-    echo "❌ Hiba!"
+    echo "❌ Nem indult el! Próbáld: pstart ${SESSION_NAME} \"${COMMAND}\""
 fi
 SSTART
-RUN chmod +x /usr/local/bin/sstart
 
-# ── slist ──
+# ── slist: Futó screen session-ök listája ──
 RUN cat > /usr/local/bin/slist << 'SLIST'
 #!/bin/bash
 echo "════════════════════════════════════════════"
 echo "  📺 SCREEN SESSION-ÖK"
 echo "════════════════════════════════════════════"
 
-# Futó session-ök
-RUNNING=$(screen -list 2>/dev/null | grep -E '\t')
-if [ -n "$RUNNING" ]; then
+SESSIONS=$(screen -list 2>/dev/null | grep -E '\t' | grep -v "^$")
+
+if [ -z "$SESSIONS" ]; then
     echo ""
-    echo "  🟢 FUTÓ:"
-    echo "$RUNNING" | while read line; do
-        NAME=$(echo "$line" | awk '{print $1}' | cut -d. -f2-)
+    echo "  (nincs futó screen session)"
+    echo ""
+    echo "  💡 Tipp: Használd inkább a pstart-ot!"
+    echo "     pstart <név> <parancs> - 100% túléli az SSH kilépést"
+else
+    echo ""
+    echo "$SESSIONS" | while read line; do
+        NAME=$(echo "$line" | awk '{print $1}' | cut -d.-f2-)
+        STATE=$(echo "$line" | grep -oP '\((.*?)\)' | tr -d '()')
+        
+        if [ "$STATE" = "Detached" ]; then
+            ICON="🟢"
+        elif [ "$STATE" = "Attached" ]; then
+            ICON="🔵"
+        else
+            ICON="🟡"
+        fi
+        
         CMD=""
-        [ -f "/root/.screen-sessions/${NAME}.cmd" ] && CMD=" │ $(cat /root/.screen-sessions/${NAME}.cmd)"
-        echo "     ${NAME}${CMD}"
+        if [ -f "/root/.screen-sessions/${NAME}.cmd" ]; then
+            CMD=" │ $(cat /root/.screen-sessions/${NAME}.cmd)"
+        fi
+        
+        echo "  ${ICON} ${NAME} - ${STATE}${CMD}"
     done
 fi
-
-# Mentett session-ök
 echo ""
-echo "  📁 MENTETT:"
-FOUND=0
-for f in /root/.screen-sessions/*.cmd 2>/dev/null; do
-    [ -f "$f" ] || continue
-    FOUND=1
-    NAME=$(basename "$f" .cmd)
-    CMD=$(cat "$f")
-    if screen -list 2>/dev/null | grep -q "\.${NAME}[[:space:]]"; then
-        echo "     🟢 ${NAME}: ${CMD}"
-    else
-        echo "     ⚪ ${NAME}: ${CMD} (watchdog újraindítja)"
-    fi
-done
-[ "$FOUND" -eq 0 ] && echo "     (nincs)"
-
-echo ""
-echo "  sattach <név>  - Csatlakozás"
-echo "  sstop <név>    - Leállítás"
 echo "════════════════════════════════════════════"
 SLIST
-RUN chmod +x /usr/local/bin/slist
 
 # ── sattach ──
 RUN cat > /usr/local/bin/sattach << 'SATTACH'
 #!/bin/bash
 if [ $# -lt 1 ]; then
-    echo "Használat: sattach <név>"
+    echo "Használat: sattach <session_név>"
     slist
     exit 1
 fi
-
 SESSION_NAME="$1"
-
-if screen -list 2>/dev/null | grep -q "\.${SESSION_NAME}[[:space:]]"; then
-    echo "📺 Csatlakozás: ${SESSION_NAME}"
-    echo "💡 Leválás: Ctrl+A, D"
-    echo ""
+if screen -list | grep -q "\.${SESSION_NAME}[[:space:]]"; then
+    echo "📺 Csatlakozás: ${SESSION_NAME} (Ctrl+A, D = leválás)"
     screen -r "$SESSION_NAME"
 else
-    echo "❌ '${SESSION_NAME}' nem fut!"
-    echo ""
-    if [ -f "/root/.screen-sessions/${SESSION_NAME}.cmd" ]; then
-        echo "📁 De mentve van! Indítás..."
-        CMD=$(cat "/root/.screen-sessions/${SESSION_NAME}.cmd")
-        sstart "$SESSION_NAME" "$CMD"
-    else
-        slist
-    fi
+    echo "❌ '${SESSION_NAME}' nem található!"
+    slist
 fi
 SATTACH
-RUN chmod +x /usr/local/bin/sattach
 
 # ── sstop ──
 RUN cat > /usr/local/bin/sstop << 'SSTOP'
 #!/bin/bash
 if [ $# -lt 1 ]; then
-    echo "Használat: sstop <név>"
-    echo "Összes:    sstop all"
+    echo "Használat: sstop <név> | sstop all"
     slist
     exit 1
 fi
-
 if [ "$1" = "all" ]; then
-    echo "🛑 Összes session leállítása..."
-    for f in /root/.screen-sessions/*.cmd 2>/dev/null; do
-        [ -f "$f" ] || continue
-        NAME=$(basename "$f" .cmd)
-        screen -S "$NAME" -X quit 2>/dev/null
-        rm -f "/root/.screen-sessions/${NAME}.cmd" 2>/dev/null
-        rm -f "/root/.screen-sessions/${NAME}.sh" 2>/dev/null
-        echo "  ⏹️  ${NAME}"
+    echo "🛑 Összes screen session leállítása..."
+    screen -list | grep -oP '\d+\.\K[^\t]+' | while read name; do
+        CLEAN_NAME=$(echo "$name" | awk '{print $1}')
+        screen -S "$CLEAN_NAME" -X quit 2>/dev/null
+        rm -f "/root/.screen-sessions/${CLEAN_NAME}.cmd" 2>/dev/null
+        echo "  ⏹️  ${CLEAN_NAME}"
     done
-    echo "✅ Kész!"
     exit 0
 fi
-
 SESSION_NAME="$1"
-
-screen -S "$SESSION_NAME" -X quit 2>/dev/null
-rm -f "/root/.screen-sessions/${SESSION_NAME}.cmd" 2>/dev/null
-rm -f "/root/.screen-sessions/${SESSION_NAME}.sh" 2>/dev/null
-
-echo "⏹️  '${SESSION_NAME}' leállítva és törölve!"
+if screen -list | grep -q "\.${SESSION_NAME}[[:space:]]"; then
+    screen -S "$SESSION_NAME" -X quit
+    rm -f "/root/.screen-sessions/${SESSION_NAME}.cmd" 2>/dev/null
+    echo "⏹️  '${SESSION_NAME}' leállítva!"
+else
+    echo "❌ '${SESSION_NAME}' nem található!"
+fi
 SSTOP
-RUN chmod +x /usr/local/bin/sstop
 
-# ══════════════════════════════════════════════════════
-# ── SCREEN WATCHDOG ──
-# ══════════════════════════════════════════════════════
-RUN cat > /usr/local/bin/screen-watchdog.sh << 'WATCHDOG'
+# ── srestart ──
+RUN cat > /usr/local/bin/srestart << 'SRESTART'
 #!/bin/bash
-echo "[WATCHDOG] Indítás - figyeli a mentett session-öket"
+if [ $# -lt 1 ]; then
+    echo "Használat: srestart <név>"
+    exit 1
+fi
+SESSION_NAME="$1"
+CMD_FILE="/root/.screen-sessions/${SESSION_NAME}.cmd"
+if [ ! -f "$CMD_FILE" ]; then
+    echo "❌ Nincs mentett parancs! Használd: sstart"
+    exit 1
+fi
+COMMAND=$(cat "$CMD_FILE")
+echo "🔄 '${SESSION_NAME}' újraindítása..."
+screen -S "$SESSION_NAME" -X quit 2>/dev/null
+sleep 1
+sstart "$SESSION_NAME" "$COMMAND"
+SRESTART
+
+# ── sstatus ──
+RUN cat > /usr/local/bin/sstatus << 'SSTATUS'
+#!/bin/bash
+pstatus
+SSTATUS
+
+# ── Jogosultságok ──
+RUN chmod +x /usr/local/bin/sstart \
+             /usr/local/bin/slist \
+             /usr/local/bin/sattach \
+             /usr/local/bin/sstop \
+             /usr/local/bin/srestart \
+             /usr/local/bin/sstatus \
+             /usr/local/bin/pstart \
+             /usr/local/bin/pstop \
+             /usr/local/bin/plist \
+             /usr/local/bin/prestart \
+             /usr/local/bin/plog \
+             /usr/local/bin/pstatus
+
+# ── Persistent process watchdog ──
+RUN cat > /usr/local/bin/persistent-watchdog.sh << 'WATCHDOG'
+#!/bin/bash
+echo "[WATCHDOG] Persistent process watchdog indítás..."
+
+# Várj amíg a supervisor teljesen elindul
+sleep 10
 
 while true; do
-    sleep 10
-    
     # Screen könyvtár fix
     if [ ! -d /var/run/screen ]; then
         mkdir -p /var/run/screen
@@ -274,132 +685,341 @@ while true; do
         chmod +t /var/run/screen
     fi
     
-    # Minden mentett session ellenőrzése
-    for cmd_file in /root/.screen-sessions/*.cmd 2>/dev/null; do
+    # Ellenőrizd hogy a supervisor conf fájlok szinkronban vannak-e
+    for cmd_file in /root/.persistent-cmds/*.cmd 2>/dev/null; do
         [ -f "$cmd_file" ] || continue
-        
         NAME=$(basename "$cmd_file" .cmd)
-        RUNNER="/root/.screen-sessions/${NAME}.sh"
+        CONF="/etc/supervisor/conf.d/user-${NAME}.conf"
         
-        # Ha nem fut ÉS van runner script → indítás
-        if ! screen -list 2>/dev/null | grep -q "\.${NAME}[[:space:]]"; then
-            if [ -f "$RUNNER" ]; then
-                echo "[WATCHDOG] $(date '+%H:%M:%S') '${NAME}' nem fut → indítás"
-                screen -dmS "$NAME" bash --norc --noprofile "$RUNNER"
-                sleep 2
-            fi
+        # Ha nincs config, de van mentett parancs, hozd létre
+        if [ ! -f "$CONF" ]; then
+            COMMAND=$(cat "$cmd_file")
+            echo "[WATCHDOG] $(date '+%H:%M:%S') '${NAME}' config hiányzik, újralétrehozás..."
+            
+            WRAPPER="/usr/local/bin/user-proc-${NAME}.sh"
+            cat > "$WRAPPER" << WEOF
+#!/bin/bash
+echo "🔄 Watchdog által újraindítva: \$(date)"
+cd /root
+exec ${COMMAND}
+WEOF
+            chmod +x "$WRAPPER"
+            
+            cat > "$CONF" << CEOF
+[program:user-${NAME}]
+command=${WRAPPER}
+directory=/root
+autostart=true
+autorestart=true
+startsecs=2
+startretries=5
+stdout_logfile=/var/log/user-processes/${NAME}.log
+stderr_logfile=/var/log/user-processes/${NAME}.error.log
+stdout_logfile_maxbytes=10MB
+stderr_logfile_maxbytes=5MB
+CEOF
+            
+            supervisorctl reread > /dev/null 2>&1
+            supervisorctl update > /dev/null 2>&1
+            echo "[WATCHDOG] '${NAME}' újraindítva!"
         fi
     done
+    
+    # Screen session-ök ellenőrzése
+    if [ -d /root/.screen-sessions ]; then
+        for cmd_file in /root/.screen-sessions/*.cmd 2>/dev/null; do
+            [ -f "$cmd_file" ] || continue
+            NAME=$(basename "$cmd_file" .cmd)
+            COMMAND=$(cat "$cmd_file")
+            
+            if ! screen -list 2>/dev/null | grep -q "\.${NAME}[[:space:]]"; then
+                echo "[WATCHDOG] $(date '+%H:%M:%S') Screen '${NAME}' nem fut, újraindítás..."
+                setsid screen -dmS "$NAME" bash -c "${COMMAND}; exec bash" </dev/null &>/dev/null &
+            fi
+        done
+    fi
+    
+    sleep 30
 done
 WATCHDOG
-RUN chmod +x /usr/local/bin/screen-watchdog.sh
 
-# ── Shell ──
+RUN chmod +x /usr/local/bin/persistent-watchdog.sh
+
+# ── Shell beállítás ──
 RUN cat > /root/.bashrc << 'BASHRC'
 export PS1='\[\033[01;32m\]\u@Szaby\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-export TERM=xterm-256color
 alias ls='ls --color=auto'
 alias ll='ls -lah'
-alias sl='slist'
 alias cls='clear'
+alias neo='neofetch'
+alias info='clear && neofetch && echo "" && cat /var/www/html/sftp.txt'
+alias cleanup='bash /usr/local/bin/cleanup.sh'
+alias mem='free -h && echo "" && df -h /'
 
-if [ -t 1 ] && [ -z "$STY" ] && [ -z "$SCREEN_CHILD" ] && [ ! -f /tmp/.neo ]; then
-    touch /tmp/.neo
+# Persistent process aliasok
+alias pl='plist'
+alias ps2='pstatus'
+
+# Screen aliasok
+alias sl='slist'
+alias ss='sstatus'
+
+if [ -t 1 ] && [ ! -f /tmp/.neofetch_shown_$$ ]; then
+    touch /tmp/.neofetch_shown_$$
     clear
     neofetch 2>/dev/null
     echo ""
     echo "═══════════════════════════════════════════════"
+    echo "  ✅ Szerver fut! (Keep-Alive aktív)"
     echo "  🔑 Jelszó: 2003"
-    echo "  📺 Screen: sstart / slist / sattach / sstop"
-    echo "  ✅ Amíg a fájlok megvannak, a screen is!"
     echo "═══════════════════════════════════════════════"
-    
-    SAVED=$(ls /root/.screen-sessions/*.cmd 2>/dev/null | wc -l)
-    RUNNING=$(screen -list 2>/dev/null | grep -c "\..*(" || echo 0)
-    
-    if [ "$SAVED" -gt 0 ] 2>/dev/null; then
-        echo ""
-        echo "  📺 Session-ök: ${RUNNING} fut / ${SAVED} mentve"
-        for f in /root/.screen-sessions/*.cmd 2>/dev/null; do
-            [ -f "$f" ] || continue
-            NAME=$(basename "$f" .cmd)
-            if screen -list 2>/dev/null | grep -q "\.${NAME}[[:space:]]"; then
-                echo "     🟢 ${NAME}"
-            else
-                echo "     ⏳ ${NAME} (indítás...)"
-            fi
-        done
-    fi
+    echo "  🚀 PERSISTENT PROCESSEK (AJÁNLOTT!):"
+    echo "     pstart <név> <parancs>  - Indítás"
+    echo "     plist                   - Lista"
+    echo "     pstop <név>             - Leállítás"
+    echo "     prestart <név>          - Újraindítás"
+    echo "     plog <név>              - Log"
+    echo "     plog <név> -f           - Élő log"
+    echo "     pstatus                 - Részletes info"
+    echo "  ─────────────────────────────────────────────"
+    echo "  📺 Screen (alternatíva):"
+    echo "     sstart / slist / sattach / sstop"
+    echo "═══════════════════════════════════════════════"
     echo ""
+    
+    # Persistent processek
+    PROC_COUNT=$(ls /etc/supervisor/conf.d/user-*.conf 2>/dev/null | wc -l)
+    if [ "$PROC_COUNT" -gt 0 ]; then
+        echo "  🚀 Persistent processek: ${PROC_COUNT}"
+        for conf in /etc/supervisor/conf.d/user-*.conf; do
+            NAME=$(basename "$conf" .conf | sed 's/^user-//')
+            STATUS=$(supervisorctl status "user-${NAME}" 2>/dev/null | awk '{print $2}')
+            [ "$STATUS" = "RUNNING" ] && ICON="🟢" || ICON="🔴"
+            echo "     ${ICON} ${NAME} (${STATUS})"
+        done
+        echo ""
+    fi
+    
+    # Screen session-ök
+    SCREEN_COUNT=$(screen -list 2>/dev/null | grep -c "\..*(" || echo 0)
+    if [ "$SCREEN_COUNT" -gt 0 ]; then
+        echo "  📺 Screen session-ök: ${SCREEN_COUNT}"
+        screen -list 2>/dev/null | grep -E '\t' | while read line; do
+            NAME=$(echo "$line" | awk '{print $1}' | cut -d.  -f2-)
+            echo "     📺 ${NAME}"
+        done
+        echo ""
+    fi
 fi
 BASHRC
-RUN cp /root/.bashrc /home/admin/.bashrc && chown admin:admin /home/admin/.bashrc
 
-# ── Cleanup ──
+RUN cp /root/.bashrc /home/admin/.bashrc && \
+    chown admin:admin /home/admin/.bashrc
+
+# ── Cleanup script ──
 RUN cat > /usr/local/bin/cleanup.sh << 'CLEANUP'
 #!/bin/bash
-apt-get clean 2>/dev/null
-journalctl --vacuum-size=50M 2>/dev/null
-find /tmp -type f -mtime +1 -delete 2>/dev/null
-pip3 cache purge 2>/dev/null
-npm cache clean --force 2>/dev/null
-find /var/log -type f -size +50M -exec truncate -s 10M {} \; 2>/dev/null
-echo "✅ Cleanup kész"
+echo "════════════════════════════════════════"
+echo "  🧹 MEMÓRIA TISZTÍTÁS"
+echo "════════════════════════════════════════"
+echo "📊 ELŐTTE:"
+free -h | grep Mem
+df -h / | grep -v Filesystem
+echo ""
+echo "🧹 Tisztítás..."
+apt-get clean 2>/dev/null || true
+journalctl --vacuum-size=50M 2>/dev/null || true
+find /tmp -type f -mtime +1 -delete 2>/dev/null || true
+find /root -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+pip3 cache purge 2>/dev/null || true
+npm cache clean --force 2>/dev/null || true
+find /var/log -type f -name "*.log.*" -delete 2>/dev/null || true
+find /var/log -type f -name "*.gz" -delete 2>/dev/null || true
+find /var/log -type f -size +50M -exec truncate -s 10M {} \; 2>/dev/null || true
+truncate -s 0 /var/log/supervisord.log 2>/dev/null || true
+find /var/log/screen -type f -mtime +3 -delete 2>/dev/null || true
+find /var/log/user-processes -type f -size +50M -exec truncate -s 5M {} \; 2>/dev/null || true
+echo ""
+echo "📊 UTÁNA:"
+free -h | grep Mem
+df -h / | grep -v Filesystem
+echo "════════════════════════════════════════"
 CLEANUP
+
 RUN chmod +x /usr/local/bin/cleanup.sh
 
-# ── Mappák ──
-RUN mkdir -p /var/www/html /root/projects /home/admin/projects && chown -R admin:admin /home/admin
+# ── Munkamappák ──
+RUN mkdir -p /var/www/html /root/projects /home/admin/projects \
+             /root/.screen-sessions /root/.persistent-cmds \
+             /var/log/user-processes && \
+    chown -R admin:admin /home/admin
 
 # ── Weboldal ──
 RUN cat > /var/www/html/index.html << 'HTML'
 <!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>Linux Server</title>
-<style>
-body{background:#0d1117;color:#c9d1d9;font-family:sans-serif;padding:20px;max-width:900px;margin:0 auto}
-h1{color:#58a6ff;text-align:center}
-.card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px;margin:15px 0}
-pre{background:#0d1117;padding:15px;border-radius:6px;color:#7ee787}
-.btn{display:block;text-align:center;padding:14px;background:#238636;color:#fff;text-decoration:none;border-radius:8px;margin:10px 0}
-.status{text-align:center;padding:15px;border-radius:8px;margin:15px 0}
-.ok{background:#0d2818;border:1px solid #238636;color:#7ee787}
-</style></head><body>
-<h1>🐧 Linux Server</h1>
-<div class="status ok" id="s">🔄</div>
-<div class="card"><h2>🔐 SSH</h2><pre id="ssh">Loading...</pre></div>
-<div class="card"><a href="/terminal" class="btn">🖥️ Web Terminál</a></div>
-<div class="card"><h2>📺 Screen</h2><pre>sstart mybot "python3 bot.py"   # Indítás
-slist                            # Lista
-sattach mybot                    # Csatlakozás
-  → Ctrl+A, D                   # Leválás (fut tovább!)
-sstop mybot                      # Leállítás
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🐧 Linux Server</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,sans-serif;padding:20px}
+        .wrap{max-width:1100px;margin:0 auto}
+        h1{color:#58a6ff;text-align:center;font-size:2.5em;margin-bottom:25px}
+        .row{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px}
+        .card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px}
+        .card h2{color:#7ee787;margin-bottom:12px;font-size:1.2em}
+        .full{grid-column:1/-1}
+        pre{background:#0d1117;padding:15px;border-radius:6px;color:#7ee787;
+            font-family:'Courier New',monospace;font-size:13px;line-height:1.6;
+            white-space:pre-wrap;overflow-x:auto}
+        .btn{display:block;text-align:center;padding:14px;background:#238636;
+            color:#fff;text-decoration:none;border-radius:8px;font-size:16px;
+            font-weight:600;margin-top:10px;transition:background .2s}
+        .btn:hover{background:#2ea043}
+        .status{text-align:center;padding:15px;border-radius:8px;font-size:1.2em;
+            font-weight:bold;margin-bottom:15px}
+        .active{background:#0d2818;border:1px solid #238636;color:#7ee787}
+        .loading{background:#1c1e26;border:1px solid #ffa657;color:#ffa657}
+        .keepalive{background:#0d2818;border:1px solid #238636;padding:15px;border-radius:8px;text-align:center;margin-bottom:15px}
+        .keepalive h3{color:#7ee787;margin-bottom:5px}
+        .keepalive p{color:#8b949e;font-size:13px}
+        .info{color:#8b949e;font-size:13px;margin-top:8px}
+        @media(max-width:768px){.row{grid-template-columns:1fr}}
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <h1>🐧 Linux Server</h1>
 
-✅ Amíg a fájlok megvannak, a screen is megmarad!</pre></div>
+    <div class="keepalive">
+        <h3>⚡ Keep-Alive + Persistent Processes AKTÍV</h3>
+        <p>Szerver 24/7 fut • Processek túlélik az SSH kilépést • Automatikus újraindítás</p>
+    </div>
+
+    <div class="status" id="status"><span class="loading">🔄 Betöltés...</span></div>
+
+    <div class="row">
+        <div class="card">
+            <h2>🔐 SSH Csatlakozás</h2>
+            <pre id="ssh-info">Betöltés...</pre>
+        </div>
+        <div class="card">
+            <h2>📂 FileZilla (SFTP)</h2>
+            <pre id="sftp-info">Betöltés...</pre>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="card full">
+            <h2>🖥️ Web Terminál</h2>
+            <a href="/terminal" class="btn" target="_blank">Terminál megnyitása</a>
+            <p class="info">Teljes Linux shell - persistent processek kezelése!</p>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="card full">
+            <h2>🖥️ Beágyazott Terminál</h2>
+            <div style="background:#000;border-radius:8px;overflow:hidden;height:500px">
+                <iframe src="/terminal" style="width:100%;height:100%;border:none"></iframe>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="card full">
+            <h2>🚀 Persistent Process Kezelés (AJÁNLOTT!)</h2>
+            <pre>pstart mybot "python3 bot.py"     # Process indítása
+pstart web "node server.js"       # Másik process
+plist                              # Futó processek
+plog mybot                         # Log megtekintés
+plog mybot -f                      # Élő log követés
+plog mybot err                     # Error log
+prestart mybot                     # Újraindítás
+pstop mybot                        # Leállítás
+pstatus                            # Részletes állapot
+pstop all                          # Összes leállítása
+
+⚡ Supervisor alapú - 100% túléli az SSH kilépést!</pre>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="card full">
+            <h2>📺 Screen Session Kezelés (alternatíva)</h2>
+            <pre>sstart mybot "python3 bot.py"     # Session indítása
+slist                              # Lista
+sattach mybot                      # Csatlakozás
+  → Ctrl+A, D                     # Leválás
+sstop mybot                        # Leállítás</pre>
+        </div>
+    </div>
+</div>
+
 <script>
-setInterval(()=>fetch('/sftp.txt').then(r=>r.text()).then(t=>{
-if(t.includes('AKTIV')){document.getElementById('s').innerHTML='✅ Aktív';
-let h='',p='';t.split('\n').forEach(l=>{if(l.includes('Host:'))h=l.split(':')[1].trim();if(l.includes('Port:')&&!l.includes('Protocol'))p=l.split(':')[1].trim()});
-if(h&&p)document.getElementById('ssh').textContent='ssh root@'+h+' -p '+p+'\nJelszó: 2003';}
-}).catch(()=>{}),3000);
-</script></body></html>
+function load(){
+    fetch('/sftp.txt').then(r=>r.text()).then(t=>{
+        if(t.includes('AKTIV')){
+            document.getElementById('status').innerHTML='<span class="active">✅ Szerver aktív!</span>';
+            var lines=t.split('\n');
+            var host='',port='';
+            lines.forEach(l=>{
+                if(l.includes('Host:'))host=l.split('Host:')[1].trim();
+                if(l.includes('Port:')&&!l.includes('Protocol'))port=l.split('Port:')[1].trim();
+            });
+            if(host&&port){
+                document.getElementById('ssh-info').textContent=
+                    'SSH parancs:\n  ssh root@'+host+' -p '+port+'\n\nJelszó: 2003\n\nPuTTY:\n  Host: '+host+'\n  Port: '+port+'\n  User: root\n  Pass: 2003';
+                document.getElementById('sftp-info').textContent=
+                    'Protocol: SFTP\nHost: '+host+'\nPort: '+port+'\nUser: root\nPass: 2003\n\nMappa: /var/www/html/';
+            }
+        } else {
+            document.getElementById('status').innerHTML='<span class="loading">⏳ Tunnel indítása...</span>';
+            document.getElementById('ssh-info').textContent=t;
+            document.getElementById('sftp-info').textContent=t;
+        }
+    }).catch(()=>{});
+}
+load();setInterval(load,3000);
+</script>
+</body>
+</html>
 HTML
 
 # ── Nginx ──
 RUN cat > /etc/nginx/sites-available/default << 'NGINX'
 server {
     listen 6969 default_server;
+    server_name _;
     root /var/www/html;
-    location /health { return 200 'OK'; }
-    location / { try_files $uri $uri/ =404; }
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
     location /terminal {
         proxy_pass http://127.0.0.1:7681;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 86400;
+        proxy_send_timeout 86400;
+        proxy_buffering off;
+        proxy_cache off;
     }
-    location /sftp.txt { default_type text/plain; add_header Cache-Control "no-cache"; }
+
+    location /sftp.txt {
+        default_type text/plain;
+        add_header Cache-Control "no-cache";
+    }
 }
 NGINX
 
