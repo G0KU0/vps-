@@ -2,7 +2,7 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PORT=6969
-ENV BORE_PORT=48252
+ENV BORE_PORT=20020
 
 # ── Alapcsomagok ──
 RUN apt-get update && apt-get install -y \
