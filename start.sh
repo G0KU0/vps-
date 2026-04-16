@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-BORE_PORT="${BORE_PORT:-48252}"
+BORE_PORT="${BORE_PORT:-20020}"
 
 echo "════════════════════════════════════════"
 echo "  🐧 Linux Server + Persistent Procs"
